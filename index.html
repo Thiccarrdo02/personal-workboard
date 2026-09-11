@@ -638,13 +638,224 @@
       .tasks-wrap { max-height: 460px; }
     }
 
+    main.app {
+      transition: filter 0.25s ease, opacity 0.25s ease;
+    }
+
+    main.app[inert] {
+      filter: blur(16px);
+      opacity: 0.12;
+      pointer-events: none;
+      user-select: none;
+    }
+
+    /* Lock Screen Styles */
+    .lock-screen {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      background: rgba(244, 244, 244, 0.94);
+      backdrop-filter: blur(28px);
+      -webkit-backdrop-filter: blur(28px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      transition: opacity 0.28s ease, visibility 0.28s ease;
+    }
+
+    .lock-screen.hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .lock-card {
+      width: 100%;
+      max-width: 320px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      animation: fadeInLock 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes fadeInLock {
+      from { opacity: 0; transform: scale(0.95) translateY(8px); }
+      to { opacity: 1; transform: scale(1) translateY(0); }
+    }
+
+    .lock-icon-wrap {
+      width: 60px;
+      height: 60px;
+      border-radius: 20px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 18px;
+      font-size: 26px;
+    }
+
+    .lock-title {
+      margin: 0 0 6px;
+      font-size: 22px;
+      font-weight: 850;
+      letter-spacing: -0.04em;
+    }
+
+    .lock-desc {
+      margin: 0 0 22px;
+      font-size: 13.5px;
+      color: var(--muted);
+      font-weight: 600;
+      line-height: 1.4;
+    }
+
+    .pin-dots {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 22px;
+      justify-content: center;
+    }
+
+    .pin-dot {
+      width: 15px;
+      height: 15px;
+      border-radius: 50%;
+      border: 2px solid var(--ink);
+      background: transparent;
+      transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .pin-dot.filled {
+      background: var(--ink);
+      transform: scale(1.15);
+    }
+
+    .pin-hidden-input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+      width: 1px;
+      height: 1px;
+    }
+
+    .keypad {
+      display: grid;
+      grid-template-columns: repeat(3, 68px);
+      gap: 14px;
+      justify-content: center;
+      margin-bottom: 14px;
+    }
+
+    .keypad-btn {
+      width: 68px;
+      height: 68px;
+      border-radius: 50%;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--ink);
+      font-size: 24px;
+      font-weight: 650;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: var(--shadow);
+      transition: transform 0.1s ease, background 0.15s ease, border-color 0.15s ease;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .keypad-btn:hover {
+      background: var(--surface-2);
+      border-color: #bebec4;
+    }
+
+    .keypad-btn:active {
+      transform: scale(0.92);
+      background: var(--surface-3);
+    }
+
+    .keypad-btn.action {
+      font-size: 20px;
+      background: transparent;
+      border-color: transparent;
+      box-shadow: none;
+    }
+
+    .keypad-btn.action:hover {
+      background: var(--surface-2);
+    }
+
+    .lock-error {
+      min-height: 20px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--urgent);
+      margin-top: 4px;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+
+    .lock-error.visible {
+      opacity: 1;
+    }
+
+    .shake {
+      animation: shakeAnim 0.38s ease-in-out;
+    }
+
+    @keyframes shakeAnim {
+      0%, 100% { transform: translateX(0); }
+      20%, 60% { transform: translateX(-10px); }
+      40%, 80% { transform: translateX(10px); }
+    }
+
     @media (prefers-reduced-motion: reduce) {
       * { scroll-behavior: auto !important; transition: none !important; }
     }
   </style>
 </head>
 <body>
-  <main class="app">
+  <div id="lockScreen" class="lock-screen hidden" aria-modal="true" role="dialog" aria-label="Enter Passcode">
+    <div class="lock-card" id="lockCard">
+      <div class="lock-icon-wrap">🔒</div>
+      <h2 class="lock-title">Enter Passcode</h2>
+      <p class="lock-desc" id="lockDesc">Enter your 4-digit PIN to access your personal board</p>
+      
+      <input id="pinHiddenInput" class="pin-hidden-input" type="password" inputmode="numeric" maxlength="4" autocomplete="off" />
+      
+      <div class="pin-dots" id="pinDots" aria-label="PIN entry status">
+        <span class="pin-dot"></span>
+        <span class="pin-dot"></span>
+        <span class="pin-dot"></span>
+        <span class="pin-dot"></span>
+      </div>
+
+      <div class="keypad">
+        <button class="keypad-btn" type="button" data-val="1">1</button>
+        <button class="keypad-btn" type="button" data-val="2">2</button>
+        <button class="keypad-btn" type="button" data-val="3">3</button>
+        <button class="keypad-btn" type="button" data-val="4">4</button>
+        <button class="keypad-btn" type="button" data-val="5">5</button>
+        <button class="keypad-btn" type="button" data-val="6">6</button>
+        <button class="keypad-btn" type="button" data-val="7">7</button>
+        <button class="keypad-btn" type="button" data-val="8">8</button>
+        <button class="keypad-btn" type="button" data-val="9">9</button>
+        <div class="keypad-btn action" style="visibility: hidden;"></div>
+        <button class="keypad-btn" type="button" data-val="0">0</button>
+        <button class="keypad-btn action" type="button" id="pinDeleteBtn" title="Delete">⌫</button>
+      </div>
+
+      <div id="lockError" class="lock-error" role="alert"></div>
+    </div>
+  </div>
+
+  <main class="app" id="appMain">
     <header class="topbar">
       <div>
         <p class="eyebrow">Personal task manager</p>
@@ -661,6 +872,7 @@
           <span class="sync-dot"></span>
           <span id="syncLabel">Sync (Local)</span>
         </button>
+        <button id="lockButton" class="button" type="button" title="Lock board">🔒 Lock</button>
         <button id="addCategory" class="button primary" type="button">+ Category</button>
       </div>
     </header>
@@ -716,8 +928,10 @@
     const SYNC_KEY_STORAGE = 'personal-workboard-sync-key';
     const SYNC_TIMESTAMP_STORAGE = 'personal-workboard-updated-at';
     const SYNC_DIRTY_STORAGE = 'personal-workboard-dirty';
+    const AUTH_TOKEN_STORAGE = 'personal-workboard-auth-token';
     const STATUS_ORDER = ['NTS', 'WIP', 'DONE'];
 
+    let authToken = localStorage.getItem(AUTH_TOKEN_STORAGE) || '';
     let syncKey = localStorage.getItem(SYNC_KEY_STORAGE) || 'main';
     localStorage.setItem(SYNC_KEY_STORAGE, syncKey);
     let lastLocalUpdatedAt = parseInt(localStorage.getItem(SYNC_TIMESTAMP_STORAGE), 10) || Date.now();
@@ -813,6 +1027,168 @@
     const disconnectSyncBtn = document.getElementById('disconnectSyncBtn');
     const generateKeyBtn = document.getElementById('generateKeyBtn');
     const closeSyncDialog = document.getElementById('closeSyncDialog');
+
+    // Lock screen elements & controller
+    const appMain = document.getElementById('appMain');
+    const lockScreen = document.getElementById('lockScreen');
+    const lockCard = document.getElementById('lockCard');
+    const lockDesc = document.getElementById('lockDesc');
+    const lockError = document.getElementById('lockError');
+    const pinDots = document.getElementById('pinDots') ? document.getElementById('pinDots').querySelectorAll('.pin-dot') : [];
+    const pinHiddenInput = document.getElementById('pinHiddenInput');
+    const pinDeleteBtn = document.getElementById('pinDeleteBtn');
+    const lockButton = document.getElementById('lockButton');
+
+    let enteredPin = '';
+    let isVerifying = false;
+
+    function showLockScreen(msg = '') {
+      if (!lockScreen) return;
+      lockScreen.classList.remove('hidden');
+      if (appMain) appMain.setAttribute('inert', '');
+      enteredPin = '';
+      if (pinHiddenInput) pinHiddenInput.value = '';
+      updatePinDots();
+      if (msg) {
+        lockError.textContent = msg;
+        lockError.classList.add('visible');
+      } else {
+        lockError.textContent = '';
+        lockError.classList.remove('visible');
+      }
+      setTimeout(() => {
+        pinHiddenInput?.focus();
+      }, 80);
+    }
+
+    function hideLockScreen() {
+      if (!lockScreen) return;
+      lockScreen.classList.add('hidden');
+      if (appMain) appMain.removeAttribute('inert');
+      enteredPin = '';
+      if (pinHiddenInput) pinHiddenInput.value = '';
+      updatePinDots();
+      lockError.textContent = '';
+      lockError.classList.remove('visible');
+    }
+
+    function isLocked() {
+      return lockScreen && !lockScreen.classList.contains('hidden');
+    }
+
+    function updatePinDots() {
+      pinDots.forEach((dot, idx) => {
+        if (idx < enteredPin.length) {
+          dot.classList.add('filled');
+        } else {
+          dot.classList.remove('filled');
+        }
+      });
+    }
+
+    async function handlePinDigit(digit) {
+      if (isVerifying || enteredPin.length >= 4) return;
+      enteredPin += digit;
+      if (pinHiddenInput) pinHiddenInput.value = enteredPin;
+      updatePinDots();
+      if (enteredPin.length === 4) {
+        await submitPin();
+      }
+    }
+
+    function handlePinDelete() {
+      if (isVerifying || enteredPin.length === 0) return;
+      enteredPin = enteredPin.slice(0, -1);
+      if (pinHiddenInput) pinHiddenInput.value = enteredPin;
+      updatePinDots();
+      lockError.textContent = '';
+      lockError.classList.remove('visible');
+    }
+
+    async function submitPin() {
+      if (isVerifying) return;
+      isVerifying = true;
+      lockError.textContent = '';
+      lockError.classList.remove('visible');
+
+      try {
+        const res = await fetch('/api/auth', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pin: enteredPin })
+        });
+
+        const data = await res.json();
+        if (res.ok && data.token) {
+          authToken = data.token;
+          localStorage.setItem(AUTH_TOKEN_STORAGE, authToken);
+          hideLockScreen();
+          pullRemoteState(true);
+        } else {
+          showPinError(data.error || 'Incorrect PIN. Please try again.');
+        }
+      } catch (err) {
+        showPinError('Network error. Check connection and retry.');
+      } finally {
+        isVerifying = false;
+      }
+    }
+
+    function showPinError(msg) {
+      lockError.textContent = msg;
+      lockError.classList.add('visible');
+      lockCard.classList.add('shake');
+      setTimeout(() => {
+        lockCard.classList.remove('shake');
+        enteredPin = '';
+        if (pinHiddenInput) pinHiddenInput.value = '';
+        updatePinDots();
+        pinHiddenInput?.focus();
+      }, 420);
+    }
+
+    document.querySelectorAll('.keypad-btn[data-val]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        handlePinDigit(btn.dataset.val);
+      });
+    });
+
+    pinDeleteBtn?.addEventListener('click', () => {
+      handlePinDelete();
+    });
+
+    lockCard?.addEventListener('click', (e) => {
+      if (!e.target.closest('.keypad-btn')) {
+        pinHiddenInput?.focus();
+      }
+    });
+
+    pinHiddenInput?.addEventListener('input', () => {
+      const val = pinHiddenInput.value.replace(/[^0-9]/g, '').slice(0, 4);
+      enteredPin = val;
+      pinHiddenInput.value = val;
+      updatePinDots();
+      if (enteredPin.length === 4) {
+        submitPin();
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (!isLocked()) return;
+      if (/^[0-9]$/.test(e.key)) {
+        e.preventDefault();
+        handlePinDigit(e.key);
+      } else if (e.key === 'Backspace' || e.key === 'Delete') {
+        e.preventDefault();
+        handlePinDelete();
+      }
+    });
+
+    lockButton?.addEventListener('click', () => {
+      authToken = '';
+      localStorage.removeItem(AUTH_TOKEN_STORAGE);
+      showLockScreen('Workboard locked');
+    });
 
     function cloneDefault() {
       return JSON.parse(JSON.stringify(DEFAULT_DATA));
@@ -916,6 +1292,10 @@
 
     async function pushRemoteState() {
       if (!syncKey) return;
+      if (!authToken) {
+        showLockScreen();
+        return;
+      }
       if (isPushing) {
         needsPush = true;
         return;
@@ -928,6 +1308,7 @@
       const pushTimestamp = lastLocalUpdatedAt;
       const payload = {
         key: syncKey,
+        token: authToken,
         updatedAt: pushTimestamp,
         data: state
       };
@@ -935,10 +1316,20 @@
       try {
         const res = await fetch('/api/sync', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${authToken}`
+          },
           body: JSON.stringify(payload),
           keepalive: true
         });
+
+        if (res.status === 401) {
+          authToken = '';
+          localStorage.removeItem(AUTH_TOKEN_STORAGE);
+          showLockScreen('Session expired. Please enter PIN again.');
+          return;
+        }
 
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const resData = await res.json();
@@ -969,6 +1360,10 @@
 
     async function pullRemoteState(force = false) {
       if (!syncKey) return;
+      if (!authToken) {
+        showLockScreen();
+        return;
+      }
       // Do not pull and overwrite if local edits are pending or in flight!
       if (isLocalDirty || isPushing || needsPush) {
         pushRemoteState();
@@ -979,8 +1374,18 @@
 
       try {
         const res = await fetch(`/api/sync?key=${encodeURIComponent(syncKey)}`, {
-          headers: { 'Cache-Control': 'no-cache' }
+          headers: {
+            'Cache-Control': 'no-cache',
+            'Authorization': `Bearer ${authToken}`
+          }
         });
+
+        if (res.status === 401) {
+          authToken = '';
+          localStorage.removeItem(AUTH_TOKEN_STORAGE);
+          showLockScreen('Session expired. Please enter PIN again.');
+          return;
+        }
 
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
@@ -1477,9 +1882,10 @@
 
     // Save before unload if dirty so refresh never loses a toggle
     window.addEventListener('beforeunload', () => {
-      if (isLocalDirty && syncKey) {
+      if (isLocalDirty && syncKey && authToken) {
         const payload = JSON.stringify({
           key: syncKey,
+          token: authToken,
           updatedAt: lastLocalUpdatedAt,
           data: state
         });
@@ -1494,11 +1900,15 @@
     if (!readSavedState()) {
       saveState(true);
     }
-    if (syncKey) {
-      if (isLocalDirty) {
-        pushRemoteState();
-      } else {
-        pullRemoteState(true);
+    if (!authToken) {
+      showLockScreen();
+    } else {
+      if (syncKey) {
+        if (isLocalDirty) {
+          pushRemoteState();
+        } else {
+          pullRemoteState(true);
+        }
       }
     }
   </script>

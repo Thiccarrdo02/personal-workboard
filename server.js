@@ -2,6 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const syncHandler = require('./api/sync');
+const authHandler = require('./api/auth');
 
 const PORT = process.env.PORT || 8000;
 const ROOT = __dirname;
@@ -22,8 +23,8 @@ const server = http.createServer(async (req, res) => {
   const pathname = parsedUrl.pathname;
 
   // Handle API routes
-  if (pathname === '/api/sync' || pathname === '/api/sync/') {
-    // Helper to mock Vercel res helper methods if missing
+  if (pathname === '/api/sync' || pathname === '/api/sync/' || pathname === '/api/auth' || pathname === '/api/auth/') {
+    const handler = (pathname.startsWith('/api/auth')) ? authHandler : syncHandler;
     req.query = Object.fromEntries(parsedUrl.searchParams.entries());
     
     let bodyData = '';
@@ -46,7 +47,7 @@ const server = http.createServer(async (req, res) => {
       };
 
       try {
-        await syncHandler(req, res);
+        await handler(req, res);
       } catch (err) {
         console.error('API Error:', err);
         if (!res.headersSent) {

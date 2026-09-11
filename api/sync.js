@@ -4,6 +4,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { verifyToken, extractToken } = require('../lib/auth');
 
 // Auto-load .env.local if present in dev/build
 try {
@@ -98,11 +99,30 @@ module.exports = async function handler(req, res) {
   // CORS configuration
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Sync-Key');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-App-Token, X-Sync-Key');
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
 
   if (req.method === 'OPTIONS') {
     res.status(204).end();
+    return;
+  }
+
+  // Parse body early for POST if string
+  let body = req.body;
+  if (req.method === 'POST' && typeof body === 'string') {
+    try {
+      body = JSON.parse(body);
+      req.body = body;
+    } catch (e) {}
+  }
+
+  // Verify authentication
+  const token = extractToken(req) || (req.query && req.query.token) || (req.body && req.body.token);
+  if (!verifyToken(token)) {
+    res.status(401).json({
+      ok: false,
+      error: 'Unauthorized: Valid PIN authentication required'
+    });
     return;
   }
 
@@ -140,15 +160,6 @@ module.exports = async function handler(req, res) {
 
   // POST: Save board state
   if (req.method === 'POST') {
-    let body = req.body;
-    if (typeof body === 'string') {
-      try {
-        body = JSON.parse(body);
-      } catch (e) {
-        res.status(400).json({ ok: false, error: 'Invalid JSON body' });
-        return;
-      }
-    }
 
     if (!body || !body.data || !Array.isArray(body.data.categories)) {
       res.status(400).json({
