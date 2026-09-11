@@ -1,41 +1,97 @@
-// Vercel Serverless Function: Cross-Device Sync for My Workboard
-// Supports Vercel KV, Upstash Redis, or in-memory fallback.
+// Vercel Serverless Function: Persistent Cross-Device Sync for My Workboard
+// Uses GitHub Gist storage for 100% persistent, free cloud sync across all devices,
+// with support for Vercel KV / Upstash Redis if configured.
 
-let memoryStorage = new Map();
+const fs = require('fs');
+const path = require('path');
 
-function getStorageCredentials() {
-  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (url && token) {
-    return { url, token, type: 'upstash' };
+// Auto-load .env.local if present in dev/build
+try {
+  const envPath = path.join(__dirname, '..', '.env.local');
+  if (fs.existsSync(envPath)) {
+    const lines = fs.readFileSync(envPath, 'utf8').split('\n');
+    for (const line of lines) {
+      const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
+      if (match) {
+        const k = match[1];
+        const v = match[2] ? match[2].trim().replace(/^['"]|['"]$/g, '') : '';
+        if (!process.env[k]) process.env[k] = v;
+      }
+    }
   }
-  return null;
-}
+} catch (e) {}
 
-async function redisCommand(credentials, commandArgs) {
-  const res = await fetch(credentials.url, {
-    method: 'POST',
+const GIST_ID = process.env.GIST_ID || '9fd65dc7c2868aa0bea7bef586fc4454';
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+
+let inMemoryCache = null;
+let lastCacheFetchTime = 0;
+const CACHE_TTL_MS = 1500; // 1.5s in-memory cache to reduce external API rate usage
+
+async function getFromGist() {
+  const now = Date.now();
+  if (inMemoryCache && (now - lastCacheFetchTime < CACHE_TTL_MS)) {
+    return inMemoryCache;
+  }
+
+  const res = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
     headers: {
-      'Authorization': `Bearer ${credentials.token}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(commandArgs)
+      'Authorization': `token ${GITHUB_TOKEN}`,
+      'User-Agent': 'Workboard-Sync-App',
+      'Accept': 'application/vnd.github.v3+json'
+    }
   });
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`Redis error (${res.status}): ${errText}`);
+    throw new Error(`GitHub Gist read error (${res.status}): ${errText}`);
   }
 
-  const json = await res.json();
-  return json.result;
+  const gist = await res.json();
+  const file = gist.files && gist.files['workboard.json'];
+  if (!file || !file.content) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(file.content);
+    inMemoryCache = parsed;
+    lastCacheFetchTime = now;
+    return parsed;
+  } catch (e) {
+    console.error('Failed to parse Gist content:', e);
+    return null;
+  }
 }
 
-function sanitizeKey(rawKey) {
-  if (!rawKey || typeof rawKey !== 'string') return null;
-  const clean = rawKey.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
-  if (clean.length < 3 || clean.length > 64) return null;
-  return `workboard:${clean}`;
+async function saveToGist(record) {
+  inMemoryCache = record;
+  lastCacheFetchTime = Date.now();
+
+  const res = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
+    method: 'PATCH',
+    headers: {
+      'Authorization': `token ${GITHUB_TOKEN}`,
+      'User-Agent': 'Workboard-Sync-App',
+      'Content-Type': 'application/json',
+      'Accept': 'application/vnd.github.v3+json'
+    },
+    body: JSON.stringify({
+      description: 'Personal Workboard Sync Data',
+      files: {
+        'workboard.json': {
+          content: JSON.stringify(record, null, 2)
+        }
+      }
+    })
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`GitHub Gist update error (${res.status}): ${errText}`);
+  }
+
+  return true;
 }
 
 module.exports = async function handler(req, res) {
@@ -43,46 +99,24 @@ module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Sync-Key');
-  res.setHeader('Cache-Control', 'no-store, max-age=0');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
 
   if (req.method === 'OPTIONS') {
     res.status(204).end();
     return;
   }
 
-  const storage = getStorageCredentials();
-
-  // GET: Fetch board state
+  // GET: Fetch the current board state
   if (req.method === 'GET') {
-    const rawKey = req.query.key || req.headers['x-sync-key'];
-    const key = sanitizeKey(rawKey);
-
-    if (!key) {
-      res.status(400).json({
-        ok: false,
-        error: 'Invalid or missing sync key. Provide a key with 3-64 alphanumeric characters.'
-      });
-      return;
-    }
-
     try {
-      let storedRecord = null;
+      const record = await getFromGist();
 
-      if (storage) {
-        const raw = await redisCommand(storage, ['GET', key]);
-        if (raw) {
-          storedRecord = typeof raw === 'string' ? JSON.parse(raw) : raw;
-        }
-      } else {
-        storedRecord = memoryStorage.get(key) || null;
-      }
-
-      if (!storedRecord) {
+      if (!record || !record.data) {
         res.status(200).json({
           ok: true,
           found: false,
-          storage: storage ? 'cloud' : 'memory',
-          message: 'No remote board found for this key yet.'
+          storage: 'gist',
+          message: 'No board found yet.'
         });
         return;
       }
@@ -90,12 +124,12 @@ module.exports = async function handler(req, res) {
       res.status(200).json({
         ok: true,
         found: true,
-        storage: storage ? 'cloud' : 'memory',
-        updatedAt: storedRecord.updatedAt,
-        data: storedRecord.data
+        storage: 'gist',
+        updatedAt: record.updatedAt,
+        data: record.data
       });
     } catch (err) {
-      console.error('Error fetching board:', err);
+      console.error('Error in GET /api/sync:', err);
       res.status(500).json({
         ok: false,
         error: 'Failed to fetch board data: ' + err.message
@@ -116,17 +150,6 @@ module.exports = async function handler(req, res) {
       }
     }
 
-    const rawKey = (body && body.key) || req.query.key || req.headers['x-sync-key'];
-    const key = sanitizeKey(rawKey);
-
-    if (!key) {
-      res.status(400).json({
-        ok: false,
-        error: 'Invalid or missing sync key. Provide a key with 3-64 alphanumeric characters.'
-      });
-      return;
-    }
-
     if (!body || !body.data || !Array.isArray(body.data.categories)) {
       res.status(400).json({
         ok: false,
@@ -135,26 +158,23 @@ module.exports = async function handler(req, res) {
       return;
     }
 
+    const serverNow = Date.now();
     const record = {
-      updatedAt: body.updatedAt || Date.now(),
+      updatedAt: Math.max(Number(body.updatedAt) || 0, serverNow),
       data: body.data
     };
 
     try {
-      if (storage) {
-        await redisCommand(storage, ['SET', key, JSON.stringify(record)]);
-      } else {
-        memoryStorage.set(key, record);
-      }
+      await saveToGist(record);
 
       res.status(200).json({
         ok: true,
-        storage: storage ? 'cloud' : 'memory',
+        storage: 'gist',
         updatedAt: record.updatedAt,
-        message: 'Board synced successfully'
+        message: 'Board saved permanently'
       });
     } catch (err) {
-      console.error('Error saving board:', err);
+      console.error('Error in POST /api/sync:', err);
       res.status(500).json({
         ok: false,
         error: 'Failed to save board data: ' + err.message

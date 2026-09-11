@@ -715,12 +715,17 @@
     const LEGACY_STORAGE_KEYS = ['personal-workboard-v1'];
     const SYNC_KEY_STORAGE = 'personal-workboard-sync-key';
     const SYNC_TIMESTAMP_STORAGE = 'personal-workboard-updated-at';
+    const SYNC_DIRTY_STORAGE = 'personal-workboard-dirty';
     const STATUS_ORDER = ['NTS', 'WIP', 'DONE'];
 
-    let syncKey = localStorage.getItem(SYNC_KEY_STORAGE) || '';
+    let syncKey = localStorage.getItem(SYNC_KEY_STORAGE) || 'main';
+    localStorage.setItem(SYNC_KEY_STORAGE, syncKey);
     let lastLocalUpdatedAt = parseInt(localStorage.getItem(SYNC_TIMESTAMP_STORAGE), 10) || Date.now();
+    let isLocalDirty = localStorage.getItem(SYNC_DIRTY_STORAGE) === 'true';
+    let isPushing = false;
+    let isPulling = false;
+    let needsPush = isLocalDirty;
     let syncTimeout = null;
-    let isSyncing = false;
 
     const DEFAULT_DATA = {
       version: 2,
@@ -875,13 +880,17 @@
       }
     }
 
-    function saveState(triggerSync = true) {
+    function saveState(immediateSync = false) {
       state.version = 2;
       lastLocalUpdatedAt = Date.now();
+      isLocalDirty = true;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       localStorage.setItem(SYNC_TIMESTAMP_STORAGE, String(lastLocalUpdatedAt));
+      localStorage.setItem(SYNC_DIRTY_STORAGE, 'true');
       renderSummary();
-      if (triggerSync) {
+      if (immediateSync) {
+        pushRemoteState();
+      } else {
         schedulePushSync();
       }
     }
@@ -906,85 +915,109 @@
     }
 
     async function pushRemoteState() {
-      if (!syncKey || isSyncing) return;
-      isSyncing = true;
-      setSyncStatus('syncing', 'Syncing…', 'Sending updates to cloud…');
+      if (!syncKey) return;
+      if (isPushing) {
+        needsPush = true;
+        return;
+      }
+      isPushing = true;
+      needsPush = false;
+      if (syncTimeout) { clearTimeout(syncTimeout); syncTimeout = null; }
+      setSyncStatus('syncing', 'Saving…', 'Uploading changes to cloud…');
+
+      const pushTimestamp = lastLocalUpdatedAt;
+      const payload = {
+        key: syncKey,
+        updatedAt: pushTimestamp,
+        data: state
+      };
 
       try {
-        const payload = {
-          key: syncKey,
-          updatedAt: lastLocalUpdatedAt,
-          data: state
-        };
         const res = await fetch('/api/sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
+          body: JSON.stringify(payload),
+          keepalive: true
         });
 
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.error || `Server responded with ${res.status}`);
-        }
-
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const resData = await res.json();
-        const timeStr = new Date(lastLocalUpdatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        setSyncStatus('synced', 'Synced', `Synced successfully! (${resData.storage || 'cloud'}). Last: ${timeStr}`);
+
+        // If no new local changes happened while in-flight, mark clean
+        if (lastLocalUpdatedAt <= pushTimestamp) {
+          isLocalDirty = false;
+          localStorage.setItem(SYNC_DIRTY_STORAGE, 'false');
+          if (resData.updatedAt) {
+            lastLocalUpdatedAt = Number(resData.updatedAt);
+            localStorage.setItem(SYNC_TIMESTAMP_STORAGE, String(lastLocalUpdatedAt));
+          }
+        }
+        const timeStr = new Date(lastLocalUpdatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        setSyncStatus('synced', 'Synced', `Synced successfully! (${timeStr})`);
       } catch (err) {
         console.warn('Sync push failed:', err);
-        setSyncStatus('error', 'Sync (Offline)', `Sync paused: ${err.message || 'Offline'}. Saved locally.`);
+        isLocalDirty = true;
+        localStorage.setItem(SYNC_DIRTY_STORAGE, 'true');
+        setSyncStatus('error', 'Sync paused', 'Offline or sync paused. Saved locally.');
       } finally {
-        isSyncing = false;
+        isPushing = false;
+        if (needsPush || isLocalDirty) {
+          setTimeout(pushRemoteState, 400);
+        }
       }
     }
 
     async function pullRemoteState(force = false) {
       if (!syncKey) return;
-      if (isSyncing && !force) return;
-      isSyncing = true;
-      setSyncStatus('syncing', 'Syncing…', 'Checking for updates from other devices…');
+      // Do not pull and overwrite if local edits are pending or in flight!
+      if (isLocalDirty || isPushing || needsPush) {
+        pushRemoteState();
+        return;
+      }
+      if (isPulling && !force) return;
+      isPulling = true;
 
       try {
         const res = await fetch(`/api/sync?key=${encodeURIComponent(syncKey)}`, {
           headers: { 'Cache-Control': 'no-cache' }
         });
 
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.error || `Server error: ${res.status}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        // If local changes were made while the request was in flight, abort pull and push!
+        if (isLocalDirty || isPushing || needsPush) {
+          pushRemoteState();
+          return;
         }
 
-        const data = await res.json();
         if (data.found && data.data) {
           const remoteTime = Number(data.updatedAt) || 0;
           if (remoteTime > lastLocalUpdatedAt) {
-            // Remote has newer data! Update local state
-            state = normalizeState(data.data);
-            lastLocalUpdatedAt = remoteTime;
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-            localStorage.setItem(SYNC_TIMESTAMP_STORAGE, String(lastLocalUpdatedAt));
-            render();
-            const timeStr = new Date(remoteTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            setSyncStatus('synced', 'Synced', `Updated from another device (${timeStr})`);
+            const isTyping = isTextEditingTarget(document.activeElement);
+            if (!isTyping) {
+              state = normalizeState(data.data);
+              lastLocalUpdatedAt = remoteTime;
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+              localStorage.setItem(SYNC_TIMESTAMP_STORAGE, String(lastLocalUpdatedAt));
+              render();
+            }
+            const timeStr = new Date(remoteTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            setSyncStatus('synced', 'Synced', `Updated from cloud (${timeStr})`);
           } else if (remoteTime < lastLocalUpdatedAt) {
-            // Local has newer data! Push to remote
-            isSyncing = false;
-            await pushRemoteState();
-            return;
+            // Local is newer, push to remote
+            pushRemoteState();
           } else {
-            setSyncStatus('synced', 'Synced', `Up to date with cloud (${new Date(lastLocalUpdatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`);
+            setSyncStatus('synced', 'Synced', 'Up to date with cloud');
           }
-        } else {
-          // Key exists on client but not on remote yet, push current local state
-          isSyncing = false;
-          await pushRemoteState();
-          return;
         }
       } catch (err) {
         console.warn('Sync pull failed:', err);
-        setSyncStatus('local', 'Local only', `Offline or sync server unavailable. Changes remain safe in this browser.`);
+        if (!isLocalDirty) {
+          setSyncStatus('local', 'Local only', 'Offline or cloud unavailable');
+        }
       } finally {
-        isSyncing = false;
+        isPulling = false;
       }
     }
 
@@ -994,7 +1027,7 @@
       setSyncStatus('syncing', 'Saving…', 'Preparing to sync…');
       syncTimeout = setTimeout(() => {
         pushRemoteState();
-      }, 1200);
+      }, 300);
     }
 
     function cleanText(value) {
@@ -1053,7 +1086,7 @@
           }
           category.name = next;
           title.textContent = next;
-          saveState();
+          saveState(true);
           render();
         });
 
@@ -1095,7 +1128,7 @@
           const taskLabel = category.tasks.length === 1 ? '1 task' : `${category.tasks.length} tasks`;
           if (!confirm(`Delete “${category.name}” and its ${taskLabel}?`)) return;
           state.categories = state.categories.filter(item => item.id !== category.id);
-          saveState();
+          saveState(true);
           render();
         });
 
@@ -1128,7 +1161,7 @@
           status.addEventListener('click', () => {
             const current = STATUS_ORDER.indexOf(task.status);
             task.status = STATUS_ORDER[(current + 1) % STATUS_ORDER.length];
-            saveState();
+            saveState(true);
             render();
           });
 
@@ -1141,7 +1174,7 @@
           urgentToggle.setAttribute('aria-label', `${task.urgent ? 'Unmark' : 'Mark'} urgent for task: ${task.text}`);
           urgentToggle.addEventListener('click', () => {
             task.urgent = !task.urgent;
-            saveState();
+            saveState(true);
             render();
           });
 
@@ -1169,7 +1202,7 @@
             }
             task.text = next;
             taskText.textContent = next;
-            saveState();
+            saveState(true);
             render();
           });
 
@@ -1189,7 +1222,7 @@
           removeTask.setAttribute('aria-label', `Delete task: ${task.text}`);
           removeTask.addEventListener('click', () => {
             category.tasks = category.tasks.filter(item => item.id !== task.id);
-            saveState();
+            saveState(true);
             render();
           });
 
@@ -1227,7 +1260,7 @@
           if (!text) return;
           category.tasks.push({ id: uid('task'), text, status: 'NTS', urgent: false });
           addInput.value = '';
-          saveState();
+          saveState(true);
           render();
           const newCard = board.querySelector(`[data-category-id="${CSS.escape(category.id)}"]`);
           newCard?.querySelector('.add-input')?.focus();
@@ -1325,7 +1358,7 @@
     document.getElementById('addCategory').addEventListener('click', () => {
       const category = { id: uid('category'), name: 'New Category', tasks: [] };
       state.categories.push(category);
-      saveState();
+      saveState(true);
       render();
       requestAnimationFrame(() => {
         const card = board.querySelector(`[data-category-id="${CSS.escape(category.id)}"]`);
@@ -1420,25 +1453,53 @@
       syncDialog.close();
     });
 
-    // Multi-device sync triggers: tab focus, visibility change, and online reconnect
+    // Multi-device sync triggers: tab focus, visibility change, user interaction, and online reconnect
     window.addEventListener('focus', () => { if (syncKey) pullRemoteState(); });
     document.addEventListener('visibilitychange', () => { if (!document.hidden && syncKey) pullRemoteState(); });
     window.addEventListener('online', () => { if (syncKey) pullRemoteState(); });
 
-    // Periodic poll every 40 seconds when tab is active and visible
-    setInterval(() => {
-      if (syncKey && !document.hidden && !isSyncing) {
+    // Quick refresh check on user interaction (throttled to at most once every 3s)
+    let lastInteractionSync = 0;
+    window.addEventListener('pointerdown', () => {
+      const now = Date.now();
+      if (syncKey && !isPushing && !isPulling && !isLocalDirty && now - lastInteractionSync > 3000) {
+        lastInteractionSync = now;
         pullRemoteState();
       }
-    }, 40000);
+    }, { passive: true });
+
+    // Fast polling every 2.5 seconds when tab is active and visible
+    setInterval(() => {
+      if (syncKey && !document.hidden && !isPushing && !isPulling && !isLocalDirty) {
+        pullRemoteState();
+      }
+    }, 2500);
+
+    // Save before unload if dirty so refresh never loses a toggle
+    window.addEventListener('beforeunload', () => {
+      if (isLocalDirty && syncKey) {
+        const payload = JSON.stringify({
+          key: syncKey,
+          updatedAt: lastLocalUpdatedAt,
+          data: state
+        });
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon('/api/sync', new Blob([payload], { type: 'application/json' }));
+        }
+      }
+    });
 
     render();
     updateSyncUI();
     if (!readSavedState()) {
-      saveState(false);
+      saveState(true);
     }
     if (syncKey) {
-      pullRemoteState();
+      if (isLocalDirty) {
+        pushRemoteState();
+      } else {
+        pullRemoteState(true);
+      }
     }
   </script>
 </body>

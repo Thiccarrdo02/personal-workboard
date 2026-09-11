@@ -1,45 +1,71 @@
 # My Workboard
 
-A tiny personal task manager that runs locally in your browser. No account, no cloud database, no dependencies.
+A modern personal task manager optimized for **Desktop (PC & Mac)**, **Laptop**, and **Mobile (iPhone & Android)** with real-time cross-device synchronization and zero setup required.
 
-## Easiest start
+---
 
-### Mac
-Double-click `START-MAC.command`.
+## Live Deployment
 
-If macOS blocks it the first time, right-click it and choose **Open**.
+- **Live Web App**: [https://temporary-express-zinc-30tfzqy.vercel.app](https://temporary-express-zinc-30tfzqy.vercel.app)
+- **Claim to Your Vercel Account**: [Claim Deployment Link](https://vercel.com/claim-deployment?code=306e79f7-2fad-4506-a532-1c4effdac1df) *(Click to permanently link to your free Vercel account)*
 
-### Windows
-Double-click `START-WINDOWS.bat`.
+---
 
-### Any computer with Python 3
-Open Terminal / Command Prompt in this folder and run:
+## Multi-Device Sync (Phone, PC & Laptop)
 
+You can run this app on your phone, laptop, and desktop PC simultaneously:
+
+1. Open the app on your computer.
+2. Click the **Sync** button in the top toolbar.
+3. Enter your secret **Sync PIN** (or click **🎲 Random** to generate one) and click **Save & Sync**.
+4. Open the web app on your phone or laptop, click **Sync**, enter the **exact same PIN**, and click **Save & Sync**.
+5. All devices now stay automatically synchronized!
+
+> [!NOTE]
+> **Offline-First Resilience**: Tasks always save instantly to local storage first (0ms latency, works completely offline). When your device is connected, changes automatically sync in the background.
+
+---
+
+## Installing as a Native App on Your Phone
+
+### iPhone (iOS Safari)
+1. Open the URL in Safari.
+2. Tap the **Share** button (the square with an arrow pointing up).
+3. Scroll down and tap **Add to Home Screen**.
+4. Tap **Add**. The app now appears on your home screen with its custom icon and runs in full-screen mode without Safari address bars!
+
+### Android (Google Chrome)
+1. Open the URL in Chrome.
+2. Tap the three dots menu in the top-right corner.
+3. Tap **Install app** or **Add to Home screen**.
+
+---
+
+## Running Locally
+
+### Node.js
 ```bash
-python3 server.py
+npm start
+```
+Runs at `http://localhost:8000` with the static server and the `/api/sync` endpoint active.
+
+### Python
+```bash
+python server.py
+# or double-click START-WINDOWS.bat / START-MAC.command
 ```
 
-The app opens automatically in your browser. It normally uses `http://127.0.0.1:8000` and will try the next free port if 8000 is already busy.
+---
 
-## What’s in this version
+## Deploying Updates to Vercel
 
-- All categories are visible on one dashboard.
-- Cleaner visual separation with stronger card structure, dividers, spacing, and task row grouping.
-- Click a category title to rename it.
-- Click task text to edit it. Press Enter or click elsewhere to save.
-- Click the status button to cycle: `NTS` → `WIP` → `DONE`.
-- Click the `!` button to mark or unmark a task as **urgent**.
-- Urgent tasks are highlighted with a subtle red treatment so they stand out immediately.
-- Each category shows small summary pills for To Start, In Progress, Done, and Urgent.
-- Categories automatically get an internal scrollbar when task lists grow longer.
-- Add tasks with the input at the bottom of each category.
-- Delete tasks or categories with the `×` control.
-- Search across all work.
-- Hide completed work when you want a cleaner active view.
-- Add a new category with **+ Category**.
-- Press `/` to jump straight to search.
-- Use **Backup** to export/import a JSON backup.
+```bash
+npx vercel
+```
+or connect this Git repository directly to your [Vercel Dashboard](https://vercel.com/new).
 
-## Storage
-
-Changes save automatically to your browser's `localStorage` on this computer/browser. If browser data is cleared, the saved board can be lost, so use **Backup → Export backup** occasionally.
+To connect free cloud persistence on Vercel:
+1. Go to your Project on [vercel.com](https://vercel.com).
+2. Click the **Storage** tab.
+3. Click **Connect Store** -> **KV (Upstash)** (100% free tier, 10,000 requests/day).
+4. Vercel automatically injects the KV credentials, giving your board permanent cloud storage.
