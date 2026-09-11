@@ -6,8 +6,9 @@ A modern personal task manager optimized for **Desktop (PC & Mac)**, **Laptop**,
 
 ## Live Deployment
 
-- **Live Web App**: [https://temporary-express-zinc-30tfzqy.vercel.app](https://temporary-express-zinc-30tfzqy.vercel.app)
-- **Claim to Your Vercel Account**: [Claim Deployment Link](https://vercel.com/claim-deployment?code=306e79f7-2fad-4506-a532-1c4effdac1df) *(Click to permanently link to your free Vercel account)*
+- **Production URL**: [https://personal-todo-manager.vercel.app](https://personal-todo-manager.vercel.app)
+- **Vercel Project Dashboard**: [https://vercel.com/razas-projects-07cc30b5/personal-todo-manager](https://vercel.com/razas-projects-07cc30b5/personal-todo-manager)
+- **GitHub Repository**: [https://github.com/Thiccarrdo02/personal-workboard](https://github.com/Thiccarrdo02/personal-workboard)
 
 ---
 
