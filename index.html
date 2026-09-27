@@ -331,14 +331,104 @@
 
     .task {
       display: grid;
-      grid-template-columns: 52px 34px minmax(0, 1fr) 28px;
-      gap: 8px;
-      align-items: start;
-      padding: 8px;
+      grid-template-columns: 20px 52px 34px minmax(0, 1fr) 22px 28px;
+      gap: 7px;
+      align-items: center;
+      padding: 7px 8px;
       border: 1px solid #e8e8ea;
       border-radius: 16px;
       background: rgba(255,255,255,.92);
       box-shadow: inset 0 1px 0 rgba(255,255,255,.85);
+      position: relative;
+      transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+    }
+
+    .drag-handle {
+      width: 20px;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #a0a0a6;
+      cursor: grab;
+      font-size: 16px;
+      user-select: none;
+      border-radius: 6px;
+      touch-action: none;
+      transition: color 0.15s ease, background 0.15s ease;
+      background: transparent;
+      border: none;
+      padding: 0;
+    }
+
+    .drag-handle:hover {
+      color: #111;
+      background: #ededef;
+    }
+
+    .drag-handle:active {
+      cursor: grabbing;
+    }
+
+    .task.dragging {
+      opacity: 0.35 !important;
+      background: #f0f0f5 !important;
+      border: 1px dashed #6366f1 !important;
+      transform: scale(0.98);
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.12) !important;
+    }
+
+    .task.drop-target-above {
+      border-top: 3px solid #111 !important;
+    }
+
+    .task.drop-target-below {
+      border-bottom: 3px solid #111 !important;
+    }
+
+    .tasks-wrap.drag-over-list {
+      background: rgba(240, 240, 245, 0.6);
+      border-radius: 12px;
+    }
+
+    .reorder-group {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .reorder-btn {
+      width: 22px;
+      height: 14px;
+      border: 1px solid #dcdce0;
+      border-radius: 4px;
+      background: #f8f8f9;
+      color: #6e6e73;
+      font-size: 8px;
+      line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      padding: 0;
+      transition: all 0.12s ease;
+      user-select: none;
+    }
+
+    .reorder-btn:hover:not(:disabled) {
+      background: #111;
+      border-color: #111;
+      color: #fff;
+    }
+
+    .reorder-btn:disabled {
+      opacity: 0.15;
+      cursor: default;
+      pointer-events: none;
+      border-color: transparent;
+      background: transparent;
     }
 
     .task:hover {
@@ -603,10 +693,20 @@
       .category-title { font-size: 22px; }
 
       .task {
-        grid-template-columns: 56px 40px minmax(0, 1fr) 34px;
-        gap: 8px;
-        padding: 10px;
+        grid-template-columns: 22px 54px 38px minmax(0, 1fr) 24px 32px;
+        gap: 7px;
+        padding: 8px 10px;
         align-items: center;
+      }
+      .drag-handle {
+        width: 22px;
+        height: 38px;
+        font-size: 18px;
+      }
+      .reorder-btn {
+        width: 24px;
+        height: 17px;
+        font-size: 9px;
       }
       .status {
         height: 38px;
@@ -934,12 +1034,14 @@
     let authToken = localStorage.getItem(AUTH_TOKEN_STORAGE) || '';
     let syncKey = localStorage.getItem(SYNC_KEY_STORAGE) || 'main';
     localStorage.setItem(SYNC_KEY_STORAGE, syncKey);
-    let lastLocalUpdatedAt = parseInt(localStorage.getItem(SYNC_TIMESTAMP_STORAGE), 10) || Date.now();
-    let isLocalDirty = localStorage.getItem(SYNC_DIRTY_STORAGE) === 'true';
+    let lastLocalUpdatedAt = parseInt(localStorage.getItem(SYNC_TIMESTAMP_STORAGE), 10) || 0;
+    let isLocalDirty = false;
+    let hasUserEditedThisSession = false;
     let isPushing = false;
     let isPulling = false;
-    let needsPush = isLocalDirty;
+    let needsPush = false;
     let syncTimeout = null;
+    let activeDragInfo = null;
 
     const DEFAULT_DATA = {
       version: 2,
@@ -948,19 +1050,18 @@
           id: 'grapes',
           name: 'Grapes',
           tasks: [
-            { id: 'grapes-1', text: 'Execute Canvas work, check fal.ai model and update', status: 'NTS', urgent: false },
-            { id: 'grapes-2', text: 'Ocado image edit feature', status: 'NTS', urgent: false },
-            { id: 'grapes-3', text: 'Ocado rating system', status: 'NTS', urgent: false },
-            { id: 'grapes-4', text: 'Ocado Video workflow update', status: 'WIP', urgent: false }
+            { id: 'grapes-1', text: 'Product Ad workflow', status: 'WIP', urgent: false },
+            { id: 'grapes-2', text: 'Video editing MCP', status: 'WIP', urgent: false },
+            { id: 'grapes-3', text: 'Video Preview of workflows', status: 'NTS', urgent: false }
           ]
         },
         {
           id: 'hudood',
           name: 'Hudood',
           tasks: [
-            { id: 'hudood-1', text: 'Hudood bug fixes and APP release', status: 'WIP', urgent: false },
-            { id: 'hudood-2', text: 'Hudood Launch video work', status: 'WIP', urgent: false },
-            { id: 'hudood-3', text: 'Hudood frontend website update — include blogs section, fix financial section errors, and improve SEO', status: 'NTS', urgent: false },
+            { id: 'hudood-1', text: 'Hudood APP store release, CERT docs play store images', status: 'WIP', urgent: false },
+            { id: 'hudood-2', text: 'Hudood Launch video work', status: 'NTS', urgent: false },
+            { id: 'hudood-3', text: 'Hudood frontend website update, fix financial section errors, and improve SEO', status: 'WIP', urgent: false },
             { id: 'hudood-4', text: 'Start Hudood phase 2, work on fixes, then on financials', status: 'NTS', urgent: false },
             { id: 'hudood-5', text: 'Moiz Bhai all invoices', status: 'NTS', urgent: false }
           ]
@@ -969,38 +1070,37 @@
           id: 'anwar-works',
           name: 'Anwar Works',
           tasks: [
-            { id: 'anwar-1', text: 'Bottle warmer Listing + A+ Images', status: 'NTS', urgent: false },
-            { id: 'anwar-2', text: 'Bottle warmer Videos', status: 'NTS', urgent: false }
+            { id: 'anwar-1', text: 'Talio Blender BOX Rutba', status: 'NTS', urgent: false },
+            { id: 'anwar-2', text: 'Kashtronix Video', status: 'NTS', urgent: false }
           ]
         },
         {
           id: 'blossom-star',
           name: 'Blossom Star',
           tasks: [
-            { id: 'blossom-1', text: 'Videos and website and website live', status: 'NTS', urgent: false },
-            { id: 'blossom-2', text: 'Edit all videos and post on Instagram, TikTok, YouTube and Facebook', status: 'NTS', urgent: false }
+            { id: 'blossom-1', text: 'Blossom Star Viral Ideas and posting', status: 'NTS', urgent: false },
+            { id: 'blossom-2', text: 'BLossom start booklet brocher final', status: 'NTS', urgent: false }
           ]
         },
         {
           id: 'zawish',
           name: 'Zawish',
           tasks: [
-            { id: 'zawish-1', text: 'Zawish branding and website update and taking live', status: 'NTS', urgent: false },
-            { id: 'zawish-2', text: 'Zawish portfolio video', status: 'WIP', urgent: false },
-            { id: 'zawish-3', text: 'Zawish Pitching for agencies', status: 'NTS', urgent: false },
+            { id: 'zawish-1', text: 'Zawish branding Logo, Profile Pic', status: 'WIP', urgent: false },
+            { id: 'zawish-2', text: 'Shoe video edit, showreel edit insta', status: 'WIP', urgent: false },
+            { id: 'zawish-3', text: '3d blender AI advanced video', status: 'WIP', urgent: false },
             { id: 'zawish-4', text: 'Updating Cios', status: 'WIP', urgent: false },
-            { id: 'zawish-5', text: 'Zawish Instagram shoe video', status: 'WIP', urgent: false }
+            { id: 'zawish-5', text: 'Rewiva', status: 'WIP', urgent: false },
+            { id: 'zawish-6', text: 'AI course', status: 'NTS', urgent: false },
+            { id: 'zawish-7', text: 'Jarvis make, all AI news should be top', status: 'NTS', urgent: false }
           ]
         },
         {
           id: 'zawish-muslim-work',
           name: 'Zawish Muslim work',
           tasks: [
-            { id: 'muslim-1', text: 'Haram ideas submission · ETA 13th', status: 'NTS', urgent: false },
-            { id: 'muslim-2', text: 'Haram security Moiz Bhai idea · ETA 13th', status: 'NTS', urgent: false },
-            { id: 'muslim-3', text: 'Haram mute for social media', status: 'WIP', urgent: false },
-            { id: 'muslim-4', text: 'Haram offline AI app', status: 'NTS', urgent: false },
-            { id: 'muslim-5', text: 'Society APP development', status: 'NTS', urgent: false }
+            { id: 'muslim-1', text: 'Haram mute for social media', status: 'WIP', urgent: false },
+            { id: 'muslim-2', text: 'Haram offline AI app', status: 'NTS', urgent: false }
           ]
         }
       ]
@@ -1260,6 +1360,7 @@
       state.version = 2;
       lastLocalUpdatedAt = Date.now();
       isLocalDirty = true;
+      hasUserEditedThisSession = true;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       localStorage.setItem(SYNC_TIMESTAMP_STORAGE, String(lastLocalUpdatedAt));
       localStorage.setItem(SYNC_DIRTY_STORAGE, 'true');
@@ -1334,6 +1435,22 @@
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const resData = await res.json();
 
+        // Handle conflict: cloud already has newer updates from another device!
+        if (resData.conflict && resData.data) {
+          console.warn('Sync conflict: cloud has newer data. Adopting latest cloud version...');
+          state = normalizeState(resData.data);
+          lastLocalUpdatedAt = Number(resData.updatedAt) || Date.now();
+          isLocalDirty = false;
+          hasUserEditedThisSession = false;
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+          localStorage.setItem(SYNC_TIMESTAMP_STORAGE, String(lastLocalUpdatedAt));
+          localStorage.setItem(SYNC_DIRTY_STORAGE, 'false');
+          render();
+          const timeStr = new Date(lastLocalUpdatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+          setSyncStatus('synced', 'Synced', `Synced latest from cloud (${timeStr})`);
+          return;
+        }
+
         // If no new local changes happened while in-flight, mark clean
         if (lastLocalUpdatedAt <= pushTimestamp) {
           isLocalDirty = false;
@@ -1364,8 +1481,8 @@
         showLockScreen();
         return;
       }
-      // Do not pull and overwrite if local edits are pending or in flight!
-      if (isLocalDirty || isPushing || needsPush) {
+      // If user actively made edits in this session, don't abort unless forced
+      if (!force && (isPushing || (isLocalDirty && hasUserEditedThisSession))) {
         pushRemoteState();
         return;
       }
@@ -1391,26 +1508,29 @@
         const data = await res.json();
 
         // If local changes were made while the request was in flight, abort pull and push!
-        if (isLocalDirty || isPushing || needsPush) {
+        if (hasUserEditedThisSession && (isLocalDirty || isPushing || needsPush)) {
           pushRemoteState();
           return;
         }
 
         if (data.found && data.data) {
           const remoteTime = Number(data.updatedAt) || 0;
-          if (remoteTime > lastLocalUpdatedAt) {
+          // Cloud authority: if remote is newer, OR if this is a fresh pull and user hasn't edited in this tab session
+          if (remoteTime > lastLocalUpdatedAt || (force && !hasUserEditedThisSession)) {
             const isTyping = isTextEditingTarget(document.activeElement);
             if (!isTyping) {
               state = normalizeState(data.data);
-              lastLocalUpdatedAt = remoteTime;
+              lastLocalUpdatedAt = Math.max(remoteTime, lastLocalUpdatedAt);
+              isLocalDirty = false;
               localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
               localStorage.setItem(SYNC_TIMESTAMP_STORAGE, String(lastLocalUpdatedAt));
+              localStorage.setItem(SYNC_DIRTY_STORAGE, 'false');
               render();
             }
             const timeStr = new Date(remoteTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
             setSyncStatus('synced', 'Synced', `Updated from cloud (${timeStr})`);
-          } else if (remoteTime < lastLocalUpdatedAt) {
-            // Local is newer, push to remote
+          } else if (remoteTime < lastLocalUpdatedAt && hasUserEditedThisSession) {
+            // Local is genuinely newer from actual user edits: push to cloud
             pushRemoteState();
           } else {
             setSyncStatus('synced', 'Synced', 'Up to date with cloud');
@@ -1451,6 +1571,47 @@
 
     function isTextEditingTarget(target) {
       return target.closest('[contenteditable="true"], input, textarea, dialog');
+    }
+
+    function moveTask(categoryId, taskId, direction) {
+      const category = state.categories.find(c => c.id === categoryId);
+      if (!category) return;
+      const idx = category.tasks.findIndex(t => t.id === taskId);
+      if (idx === -1) return;
+      const newIdx = idx + direction;
+      if (newIdx < 0 || newIdx >= category.tasks.length) return;
+
+      const [task] = category.tasks.splice(idx, 1);
+      category.tasks.splice(newIdx, 0, task);
+      saveState(true);
+      render();
+    }
+
+    function moveTaskToPosition(sourceCatId, targetCatId, taskId, targetTaskId, placeBefore = true) {
+      const sourceCat = state.categories.find(c => c.id === sourceCatId);
+      const targetCat = state.categories.find(c => c.id === targetCatId);
+      if (!sourceCat || !targetCat) return;
+
+      const srcIdx = sourceCat.tasks.findIndex(t => t.id === taskId);
+      if (srcIdx === -1) return;
+
+      const [task] = sourceCat.tasks.splice(srcIdx, 1);
+
+      if (targetTaskId) {
+        let tgtIdx = targetCat.tasks.findIndex(t => t.id === targetTaskId);
+        if (tgtIdx === -1) {
+          targetCat.tasks.push(task);
+        } else {
+          if (!placeBefore) tgtIdx += 1;
+          targetCat.tasks.splice(tgtIdx, 0, task);
+        }
+      } else {
+        // Dropped on empty category or list bottom
+        targetCat.tasks.push(task);
+      }
+
+      saveState(true);
+      render();
     }
 
     function render() {
@@ -1546,7 +1707,7 @@
         list.className = 'tasks';
 
         let visibleCount = 0;
-        category.tasks.forEach(task => {
+        category.tasks.forEach((task, taskIndex) => {
           const matchesSearch = !needle || category.name.toLowerCase().includes(needle) || task.text.toLowerCase().includes(needle);
           const matchesDone = !hideDone || task.status !== 'DONE';
           if (!matchesSearch || !matchesDone) return;
@@ -1555,6 +1716,146 @@
           const row = document.createElement('li');
           row.className = `task${task.status === 'DONE' ? ' done' : ''}${task.urgent ? ' urgent' : ''}`;
           row.dataset.taskId = task.id;
+
+          // Drag Handle
+          const dragHandle = document.createElement('button');
+          dragHandle.type = 'button';
+          dragHandle.className = 'drag-handle';
+          dragHandle.innerHTML = '&#x2807;'; // ⠿
+          dragHandle.title = 'Drag to reorder task';
+          dragHandle.setAttribute('aria-label', `Drag to reorder ${task.text}`);
+          dragHandle.setAttribute('tabindex', '-1');
+
+          // Up / Down Reorder Buttons
+          const reorderGroup = document.createElement('div');
+          reorderGroup.className = 'reorder-group';
+
+          const upBtn = document.createElement('button');
+          upBtn.type = 'button';
+          upBtn.className = 'reorder-btn';
+          upBtn.innerHTML = '▲';
+          upBtn.title = 'Move task up';
+          upBtn.setAttribute('aria-label', `Move ${task.text} up`);
+          if (taskIndex === 0) upBtn.disabled = true;
+          upBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            moveTask(category.id, task.id, -1);
+          });
+
+          const downBtn = document.createElement('button');
+          downBtn.type = 'button';
+          downBtn.className = 'reorder-btn';
+          downBtn.innerHTML = '▼';
+          downBtn.title = 'Move task down';
+          downBtn.setAttribute('aria-label', `Move ${task.text} down`);
+          if (taskIndex === category.tasks.length - 1) downBtn.disabled = true;
+          downBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            moveTask(category.id, task.id, 1);
+          });
+
+          reorderGroup.append(upBtn, downBtn);
+
+          // HTML5 Drag and Drop events
+          row.draggable = true;
+          row.addEventListener('dragstart', (e) => {
+            if (document.activeElement && isTextEditingTarget(document.activeElement)) {
+              e.preventDefault();
+              return;
+            }
+            activeDragInfo = { categoryId: category.id, taskId: task.id };
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', JSON.stringify(activeDragInfo));
+            setTimeout(() => { row.classList.add('dragging'); }, 0);
+          });
+
+          row.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            if (!activeDragInfo || activeDragInfo.taskId === task.id) return;
+            const rect = row.getBoundingClientRect();
+            const midY = rect.top + rect.height / 2;
+            if (e.clientY < midY) {
+              row.classList.add('drop-target-above');
+              row.classList.remove('drop-target-below');
+            } else {
+              row.classList.add('drop-target-below');
+              row.classList.remove('drop-target-above');
+            }
+          });
+
+          row.addEventListener('dragleave', () => {
+            row.classList.remove('drop-target-above', 'drop-target-below');
+          });
+
+          row.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const placeBefore = row.classList.contains('drop-target-above');
+            row.classList.remove('drop-target-above', 'drop-target-below');
+            if (!activeDragInfo || activeDragInfo.taskId === task.id) return;
+            moveTaskToPosition(activeDragInfo.categoryId, category.id, activeDragInfo.taskId, task.id, placeBefore);
+          });
+
+          row.addEventListener('dragend', () => {
+            row.classList.remove('dragging');
+            document.querySelectorAll('.drop-target-above, .drop-target-below, .drag-over-list').forEach(el => {
+              el.classList.remove('drop-target-above', 'drop-target-below', 'drag-over-list');
+            });
+            activeDragInfo = null;
+          });
+
+          // Touch Drag Support for mobile screens on dragHandle
+          dragHandle.addEventListener('pointerdown', (e) => {
+            if (e.pointerType === 'mouse') return;
+            const pointerId = e.pointerId;
+            dragHandle.setPointerCapture(pointerId);
+            activeDragInfo = { categoryId: category.id, taskId: task.id };
+            row.classList.add('dragging');
+
+            let currentTargetRow = null;
+            let placeBefore = true;
+
+            const onPointerMove = (moveEvt) => {
+              const targetEl = document.elementFromPoint(moveEvt.clientX, moveEvt.clientY);
+              const targetRow = targetEl?.closest('li.task');
+              document.querySelectorAll('.drop-target-above, .drop-target-below').forEach(el => {
+                el.classList.remove('drop-target-above', 'drop-target-below');
+              });
+              if (targetRow && targetRow !== row) {
+                currentTargetRow = targetRow;
+                const rect = targetRow.getBoundingClientRect();
+                placeBefore = moveEvt.clientY < rect.top + rect.height / 2;
+                targetRow.classList.add(placeBefore ? 'drop-target-above' : 'drop-target-below');
+              } else {
+                currentTargetRow = null;
+              }
+            };
+
+            const onPointerUp = () => {
+              dragHandle.releasePointerCapture(pointerId);
+              dragHandle.removeEventListener('pointermove', onPointerMove);
+              dragHandle.removeEventListener('pointerup', onPointerUp);
+              dragHandle.removeEventListener('pointercancel', onPointerUp);
+              row.classList.remove('dragging');
+              document.querySelectorAll('.drop-target-above, .drop-target-below').forEach(el => {
+                el.classList.remove('drop-target-above', 'drop-target-below');
+              });
+
+              if (currentTargetRow && activeDragInfo) {
+                const targetTaskId = currentTargetRow.dataset.taskId;
+                const targetCatId = currentTargetRow.closest('.category')?.dataset.categoryId;
+                if (targetTaskId && targetCatId) {
+                  moveTaskToPosition(activeDragInfo.categoryId, targetCatId, activeDragInfo.taskId, targetTaskId, placeBefore);
+                }
+              }
+              activeDragInfo = null;
+            };
+
+            dragHandle.addEventListener('pointermove', onPointerMove);
+            dragHandle.addEventListener('pointerup', onPointerUp);
+            dragHandle.addEventListener('pointercancel', onPointerUp);
+          });
 
           const status = document.createElement('button');
           status.type = 'button';
@@ -1631,8 +1932,27 @@
             render();
           });
 
-          row.append(status, urgentToggle, main, removeTask);
+          row.append(dragHandle, status, urgentToggle, main, reorderGroup, removeTask);
           list.append(row);
+        });
+
+        // Enable dragging over the list container to drop at bottom or empty category
+        listWrap.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          listWrap.classList.add('drag-over-list');
+        });
+        listWrap.addEventListener('dragleave', (e) => {
+          if (!listWrap.contains(e.relatedTarget)) {
+            listWrap.classList.remove('drag-over-list');
+          }
+        });
+        listWrap.addEventListener('drop', (e) => {
+          if (e.target.closest('li.task')) return;
+          e.preventDefault();
+          listWrap.classList.remove('drag-over-list');
+          if (!activeDragInfo) return;
+          moveTaskToPosition(activeDragInfo.categoryId, category.id, activeDragInfo.taskId, null, false);
         });
 
         if (visibleCount === 0) {
@@ -1898,17 +2218,15 @@
     render();
     updateSyncUI();
     if (!readSavedState()) {
-      saveState(true);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      localStorage.setItem(SYNC_TIMESTAMP_STORAGE, '0');
+      localStorage.setItem(SYNC_DIRTY_STORAGE, 'false');
     }
     if (!authToken) {
       showLockScreen();
     } else {
       if (syncKey) {
-        if (isLocalDirty) {
-          pushRemoteState();
-        } else {
-          pullRemoteState(true);
-        }
+        pullRemoteState(true);
       }
     }
   </script>

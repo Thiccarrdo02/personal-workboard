@@ -160,7 +160,6 @@ module.exports = async function handler(req, res) {
 
   // POST: Save board state
   if (req.method === 'POST') {
-
     if (!body || !body.data || !Array.isArray(body.data.categories)) {
       res.status(400).json({
         ok: false,
@@ -169,13 +168,34 @@ module.exports = async function handler(req, res) {
       return;
     }
 
-    const serverNow = Date.now();
-    const record = {
-      updatedAt: Math.max(Number(body.updatedAt) || 0, serverNow),
-      data: body.data
-    };
+    const clientUpdatedAt = Number(body.updatedAt) || 0;
+    const force = Boolean(body.force);
 
     try {
+      // Check current cloud record first to protect against stale overwrites
+      const current = await getFromGist();
+      const currentUpdatedAt = current ? (Number(current.updatedAt) || 0) : 0;
+
+      // If the cloud already has newer data and this is not a forced push,
+      // prevent stale overwrite and return the latest cloud data to the client!
+      if (!force && current && current.data && currentUpdatedAt > clientUpdatedAt) {
+        res.status(200).json({
+          ok: false,
+          conflict: true,
+          storage: 'gist',
+          updatedAt: currentUpdatedAt,
+          data: current.data,
+          message: 'Cloud has newer data from another device. Synced with latest.'
+        });
+        return;
+      }
+
+      const serverNow = Date.now();
+      const record = {
+        updatedAt: Math.max(clientUpdatedAt, serverNow),
+        data: body.data
+      };
+
       await saveToGist(record);
 
       res.status(200).json({
