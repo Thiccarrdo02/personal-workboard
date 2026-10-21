@@ -1,105 +1,20 @@
-// Vercel Serverless Function: Persistent Cross-Device Sync for My Workboard
-// Uses GitHub Gist storage for 100% persistent, free cloud sync across all devices,
-// with support for Vercel KV / Upstash Redis if configured.
+// Serverless Function: cross-device sync for My Workboard.
+//
+// Every saved board gets a revision number (`rev`). Clients send the revision
+// they last synced from (`baseRev`); if the cloud has moved on since then the
+// write is rejected and the latest board is returned, so the client can merge
+// task-by-task and retry instead of overwriting another device's changes.
 
-const fs = require('fs');
-const path = require('path');
 const { verifyToken, extractToken } = require('../lib/auth');
+const storage = require('../lib/storage');
 
-// Auto-load .env.local if present in dev/build
-try {
-  const envPath = path.join(__dirname, '..', '.env.local');
-  if (fs.existsSync(envPath)) {
-    const lines = fs.readFileSync(envPath, 'utf8').split('\n');
-    for (const line of lines) {
-      const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
-      if (match) {
-        const k = match[1];
-        const v = match[2] ? match[2].trim().replace(/^['"]|['"]$/g, '') : '';
-        if (!process.env[k]) process.env[k] = v;
-      }
-    }
-  }
-} catch (e) {}
-
-const GIST_ID = process.env.GIST_ID || '9fd65dc7c2868aa0bea7bef586fc4454';
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-
-let inMemoryCache = null;
-let lastCacheFetchTime = 0;
-const CACHE_TTL_MS = 1500; // 1.5s in-memory cache to reduce external API rate usage
-
-async function getFromGist() {
-  const now = Date.now();
-  if (inMemoryCache && (now - lastCacheFetchTime < CACHE_TTL_MS)) {
-    return inMemoryCache;
-  }
-
-  const res = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
-    headers: {
-      'Authorization': `token ${GITHUB_TOKEN}`,
-      'User-Agent': 'Workboard-Sync-App',
-      'Accept': 'application/vnd.github.v3+json'
-    }
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`GitHub Gist read error (${res.status}): ${errText}`);
-  }
-
-  const gist = await res.json();
-  const file = gist.files && gist.files['workboard.json'];
-  if (!file || !file.content) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(file.content);
-    inMemoryCache = parsed;
-    lastCacheFetchTime = now;
-    return parsed;
-  } catch (e) {
-    console.error('Failed to parse Gist content:', e);
-    return null;
-  }
-}
-
-async function saveToGist(record) {
-  inMemoryCache = record;
-  lastCacheFetchTime = Date.now();
-
-  const res = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
-    method: 'PATCH',
-    headers: {
-      'Authorization': `token ${GITHUB_TOKEN}`,
-      'User-Agent': 'Workboard-Sync-App',
-      'Content-Type': 'application/json',
-      'Accept': 'application/vnd.github.v3+json'
-    },
-    body: JSON.stringify({
-      description: 'Personal Workboard Sync Data',
-      files: {
-        'workboard.json': {
-          content: JSON.stringify(record, null, 2)
-        }
-      }
-    })
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`GitHub Gist update error (${res.status}): ${errText}`);
-  }
-
-  return true;
-}
+const SCHEMA = 3;
 
 module.exports = async function handler(req, res) {
   // CORS configuration
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-App-Token, X-Sync-Key');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-App-Token');
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
 
   if (req.method === 'OPTIONS') {
@@ -116,8 +31,8 @@ module.exports = async function handler(req, res) {
     } catch (e) {}
   }
 
-  // Verify authentication
-  const token = extractToken(req) || (req.query && req.query.token) || (req.body && req.body.token);
+  // Verify authentication (body token is used by navigator.sendBeacon on page close)
+  const token = extractToken(req) || (body && body.token);
   if (!verifyToken(token)) {
     res.status(401).json({
       ok: false,
@@ -129,23 +44,25 @@ module.exports = async function handler(req, res) {
   // GET: Fetch the current board state
   if (req.method === 'GET') {
     try {
-      const record = await getFromGist();
+      const record = await storage.readBoard();
 
       if (!record || !record.data) {
         res.status(200).json({
           ok: true,
           found: false,
-          storage: 'gist',
+          storage: storage.backend,
           message: 'No board found yet.'
         });
         return;
       }
 
+      const rev = Number(record.updatedAt) || 0;
       res.status(200).json({
         ok: true,
         found: true,
-        storage: 'gist',
-        updatedAt: record.updatedAt,
+        storage: storage.backend,
+        rev,
+        updatedAt: rev,
         data: record.data
       });
     } catch (err) {
@@ -158,7 +75,7 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  // POST: Save board state
+  // POST: Save board state if it was based on the latest revision
   if (req.method === 'POST') {
     if (!body || !body.data || !Array.isArray(body.data.categories)) {
       res.status(400).json({
@@ -168,40 +85,43 @@ module.exports = async function handler(req, res) {
       return;
     }
 
-    const clientUpdatedAt = Number(body.updatedAt) || 0;
-    const force = Boolean(body.force);
-
     try {
-      // Check current cloud record first to protect against stale overwrites
-      const current = await getFromGist();
-      const currentUpdatedAt = current ? (Number(current.updatedAt) || 0) : 0;
+      const current = await storage.readBoard({ fresh: true });
+      const hasCurrent = Boolean(current && current.data);
+      const currentRev = hasCurrent ? Number(current.updatedAt) || 0 : 0;
 
-      // If the cloud already has newer data and this is not a forced push,
-      // prevent stale overwrite and return the latest cloud data to the client!
-      if (!force && current && current.data && currentUpdatedAt > clientUpdatedAt) {
+      // Pages cached from before the v3 data model don't send a schema. They may
+      // read the board, but never overwrite it (that would drop due dates, notes, etc.).
+      const isCurrentClient = Number(body.schema) >= SCHEMA;
+      const isStale = !isCurrentClient || Number(body.baseRev) !== currentRev;
+
+      if (hasCurrent && isStale) {
         res.status(200).json({
           ok: false,
           conflict: true,
-          storage: 'gist',
-          updatedAt: currentUpdatedAt,
+          storage: storage.backend,
+          rev: currentRev,
+          updatedAt: currentRev,
           data: current.data,
-          message: 'Cloud has newer data from another device. Synced with latest.'
+          message: isCurrentClient
+            ? 'Cloud has newer changes from another device. Merge and retry.'
+            : 'This page is out of date. Reload to keep editing.'
         });
         return;
       }
 
-      const serverNow = Date.now();
-      const record = {
-        updatedAt: Math.max(clientUpdatedAt, serverNow),
+      const rev = Math.max(Date.now(), currentRev + 1);
+      await storage.writeBoard({
+        updatedAt: rev,
+        schema: isCurrentClient ? SCHEMA : 2,
         data: body.data
-      };
-
-      await saveToGist(record);
+      });
 
       res.status(200).json({
         ok: true,
-        storage: 'gist',
-        updatedAt: record.updatedAt,
+        storage: storage.backend,
+        rev,
+        updatedAt: rev,
         message: 'Board saved permanently'
       });
     } catch (err) {

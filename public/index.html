@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#f4f4f4" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#0b0b0c" media="(prefers-color-scheme: dark)" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Workboard" />
+  <meta name="description" content="Personal task manager for PC, laptop and phone" />
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>My Workboard</title>
+  <script>
+    // Apply the saved theme before first paint to avoid a flash.
+    try {
+      var savedPrefs = JSON.parse(localStorage.getItem('personal-workboard-prefs') || '{}');
+      if (savedPrefs.theme === 'light' || savedPrefs.theme === 'dark') document.documentElement.dataset.theme = savedPrefs.theme;
+    } catch (e) {}
+  </script>
+  <script src="js/core.js" defer></script>
+  <script src="js/store.js" defer></script>
+  <script src="js/ui.js" defer></script>
+  <script src="js/sheets.js" defer></script>
+  <script src="js/main.js" defer></script>
+</head>
+<body>
+  <div id="lockScreen" class="lock-screen hidden" aria-modal="true" role="dialog" aria-label="Enter Passcode">
+    <div class="lock-card" id="lockCard">
+      <div class="lock-icon-wrap">🔒</div>
+      <h2 class="lock-title">Enter Passcode</h2>
+      <p class="lock-desc" id="lockDesc">Enter your 4-digit PIN to access your personal board</p>
+
+      <input id="pinHiddenInput" class="pin-hidden-input" type="password" inputmode="numeric" maxlength="4" autocomplete="off" />
+
+      <div class="pin-dots" id="pinDots" aria-label="PIN entry status">
+        <span class="pin-dot"></span>
+        <span class="pin-dot"></span>
+        <span class="pin-dot"></span>
+        <span class="pin-dot"></span>
+      </div>
+
+      <div class="keypad">
+        <button class="keypad-btn" type="button" data-val="1">1</button>
+        <button class="keypad-btn" type="button" data-val="2">2</button>
+        <button class="keypad-btn" type="button" data-val="3">3</button>
+        <button class="keypad-btn" type="button" data-val="4">4</button>
+        <button class="keypad-btn" type="button" data-val="5">5</button>
+        <button class="keypad-btn" type="button" data-val="6">6</button>
+        <button class="keypad-btn" type="button" data-val="7">7</button>
+        <button class="keypad-btn" type="button" data-val="8">8</button>
+        <button class="keypad-btn" type="button" data-val="9">9</button>
+        <div class="keypad-btn action" style="visibility: hidden;"></div>
+        <button class="keypad-btn" type="button" data-val="0">0</button>
+        <button class="keypad-btn action" type="button" id="pinDeleteBtn" title="Delete">⌫</button>
+      </div>
+
+      <div id="lockError" class="lock-error" role="alert"></div>
+    </div>
+  </div>
+
+  <main class="app" id="appMain">
+    <header class="topbar">
+      <div class="brand">
+        <p class="eyebrow">Personal task manager</p>
+        <h1>My Workboard</h1>
+        <p class="subtitle">Everything stays on one screen. Press <kbd>N</kbd> to add a task with a date, <kbd>?</kbd> for shortcuts.</p>
+      </div>
+      <div class="topbar-actions">
+        <button id="syncButton" class="button sync-badge" type="button" data-status="idle" title="Cloud sync status">
+          <span class="sync-dot"></span>
+          <span id="syncLabel">Sync</span>
+        </button>
+        <button id="moreButton" class="button" type="button" aria-haspopup="menu" title="More options">
+          <span class="more-dots" aria-hidden="true">⋯</span><span class="desktop-only">More</span>
+        </button>
+        <button id="quickAddButton" class="button primary desktop-only" type="button" title="Quick add (N)">+ Add task <kbd>N</kbd></button>
+      </div>
+    </header>
+
+    <div class="controls">
+      <div class="search-wrap">
+        <input id="search" class="search" type="search" placeholder="Search all work" aria-label="Search all work" autocomplete="off" />
+      </div>
+      <div class="view-switch desktop-only" role="tablist" aria-label="View">
+        <button type="button" role="tab" data-view="board">Board</button>
+        <button type="button" role="tab" data-view="kanban">Kanban</button>
+        <button type="button" role="tab" data-view="focus">Focus</button>
+      </div>
+      <button id="hideDone" class="button" type="button" aria-pressed="false">Hide done</button>
+      <button id="addCategory" class="button desktop-only" type="button">+ Category</button>
+    </div>
+
+    <section id="summary" class="summary" aria-label="Task summary"></section>
+    <section id="agenda" class="agenda" aria-label="Today and overdue"></section>
+    <section id="view" class="view" aria-live="polite"></section>
+    <div class="footer-hint">Click status to cycle To start → In progress → Done · right-click or long-press it for Waiting · <kbd>N</kbd> quick add · <kbd>/</kbd> search · <kbd>?</kbd> all shortcuts · changes save and sync automatically</div>
+  </main>
+
+  <nav class="bottom-nav" aria-label="Views">
+    <button type="button" data-view="board">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="7" height="16" rx="2"/><rect x="14" y="4" width="7" height="10" rx="2"/></svg>
+      <span>Board</span>
+    </button>
+    <button type="button" data-view="kanban">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="5" height="16" rx="1.5"/><rect x="9.5" y="4" width="5" height="11" rx="1.5"/><rect x="16" y="4" width="5" height="7" rx="1.5"/></svg>
+      <span>Kanban</span>
+    </button>
+    <button type="button" class="fab" id="fabAdd" aria-label="Add task">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+    <button type="button" data-view="focus">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg>
+      <span>Focus</span>
+    </button>
+    <button type="button" id="navMore">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+      <span>More</span>
+    </button>
+  </nav>
+
+  <div id="toastHost" class="toast-host" aria-live="polite"></div>
+  <div id="popoverBackdrop" class="popover-backdrop" hidden></div>
+  <div id="popover" class="popover" role="menu" hidden></div>
+
+  <dialog id="detailsDialog" class="sheet details-sheet" aria-label="Task details"></dialog>
+
+  <dialog id="quickAddDialog" class="sheet quick-add-sheet" aria-label="Quick add">
+    <form method="dialog" class="sheet-inner" id="quickAddForm">
+      <div class="sheet-head">
+        <h3>Add task</h3>
+        <button type="button" class="icon-button sheet-close" data-close aria-label="Close">×</button>
+      </div>
+      <input id="quickAddInput" class="quick-add-input" type="text" autocomplete="off" enterkeyhint="done"
+        placeholder="e.g. Send invoice fri 5pm ! #client" aria-label="Task with optional date, #category, ! for urgent" />
+      <div id="quickAddPreview" class="parse-preview" aria-live="polite"></div>
+      <div class="quick-add-row">
+        <label class="field-inline">
+          <span>In</span>
+          <select id="quickAddCategory" aria-label="Category"></select>
+        </label>
+        <button type="submit" class="button primary" id="quickAddSubmit">Add task</button>
+      </div>
+      <p class="hint">Try <code>tmr</code>, <code>fri 5pm</code>, <code>25 oct</code>, <code>in 3 days</code>, <code>every monday</code>, <code>monthly</code>, <code>!</code> urgent, <code>#client</code>, <code>@waiting</code>. <span class="desktop-only"><kbd>Ctrl</kbd>+<kbd>Enter</kbd> adds and keeps this open.</span></p>
+    </form>
+  </dialog>
+
+  <dialog id="panelDialog" class="sheet panel-sheet"></dialog>
+</body>
+</html>

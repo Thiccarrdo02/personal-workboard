@@ -5,7 +5,7 @@ import socket
 import threading
 import webbrowser
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent / "public"
 os.chdir(ROOT)
 
 
