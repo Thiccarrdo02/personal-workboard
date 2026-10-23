@@ -1,14 +1,15 @@
-# My Workboard
+# ZAWISH Workboard
 
-A personal task manager built around one screen of client boards, optimised for **Desktop (PC & Mac)**, **Laptop** and **Mobile (iPhone & Android)**, with cross-device sync.
+Personal task boards for the ZAWISH team, built around one screen of client boards, optimised for **Desktop (PC & Mac)**, **Laptop** and **Mobile (iPhone & Android)**, with cross-device sync. Each person signs in with their own 6-digit PIN and sees only their own board.
 
 ---
 
 ## Live Deployment
 
-- **Production URL**: [https://personal-todo-manager.vercel.app](https://personal-todo-manager.vercel.app)
-- **Vercel Project Dashboard**: [https://vercel.com/razas-projects-07cc30b5/personal-todo-manager](https://vercel.com/razas-projects-07cc30b5/personal-todo-manager)
+- **App**: [https://board.zawish.si](https://board.zawish.si) — Cloudflare Workers (free plan) + D1 database
+- **Cloudflare**: Workers & Pages → `zawish-workboard` (D1 database `zawish-workboard`, APAC)
 - **GitHub Repository**: [https://github.com/Thiccarrdo02/personal-workboard](https://github.com/Thiccarrdo02/personal-workboard)
+- The old address (personal-todo-manager.vercel.app) is retired.
 
 ---
 
@@ -34,9 +35,18 @@ A personal task manager built around one screen of client boards, optimised for 
 
 ---
 
+## Signing in
+
+- **Who's working?** Tap your name, enter your 6-digit PIN. With "Keep me signed in on this device" ticked you only do this once per device (sessions last 180 days while in use).
+- **New people** get a one-time setup link (valid 24 hours) to choose their PIN. Easy PINs like `123456` are refused.
+- **Wrong PINs**: 5 wrong tries lock that profile for 15 minutes (doubling each time); each network is limited to 30 tries per 15 minutes.
+- **Sign out of this device** (More menu) also removes the local copy of the board, for shared computers.
+- PINs are stored as HMAC-SHA256 with a per-person salt and a server secret (`PIN_PEPPER`), never as typed.
+- Every API request is tied to one person's session and can only read or write that person's board.
+
 ## Multi-Device Sync (Phone, PC & Laptop)
 
-Open the app on any device and enter your PIN — that's it. Every change saves on the device instantly (works offline) and syncs in the background.
+Every change saves on the device instantly (works offline) and syncs in the background.
 
 Each task carries its own change time, and the server only accepts a save that is based on the latest cloud version. When two devices edit at the same time, the later one receives the newer board, **merges it task by task**, and saves again — so edits on different devices never overwrite each other. Deleted tasks leave a short-lived marker so they don't come back from another device.
 
@@ -58,55 +68,69 @@ The installed app opens full-screen and keeps working without a connection; chan
 
 ## Morning Digest Setup (optional)
 
-In Vercel → Project → Settings → Environment Variables:
+For now the digest covers the owner's board. In Cloudflare → Workers & Pages → `zawish-workboard` → Settings → Variables and Secrets, add these as **secrets**:
 
-| Variable | Purpose |
+| Secret | Purpose |
 | --- | --- |
-| `CRON_SECRET` | Any long random string; authorises the daily schedule |
 | `TELEGRAM_BOT_TOKEN` | From `@BotFather` → `/newbot` |
 | `TELEGRAM_CHAT_ID` | Message your bot, then use **More → Morning digest → Find my Telegram chat ID** |
 | `RESEND_API_KEY`, `DIGEST_EMAIL_TO` | Optional email delivery via [resend.com](https://resend.com) (`DIGEST_EMAIL_FROM` optional) |
 
-Redeploy after adding them. The schedule lives in `vercel.json` (`30 2 * * *` UTC = 8:00 AM IST); the free plan may deliver it up to an hour late. Use **Send test now** in the app to try it.
+The schedule lives in `wrangler.jsonc` (`30 2 * * *` UTC = 8:00 AM IST). Use **Send test now** in the app to try it.
 
 ---
 
 ## Running Locally
 
 ```bash
+npm install
+npm run db:local
 npm run dev
 ```
-Runs at `http://localhost:8123` with throwaway storage in `.data/` and the test PIN from `scripts/dev.js` — it never touches the real cloud board.
+Runs the real Cloudflare runtime at `http://localhost:8787` with a local database in `.wrangler/` and a dev-only `PIN_PEPPER` in `.dev.vars` (create it with any random 64-character string). It never touches the live board. Create a local profile and setup link with:
 
 ```bash
-npm start
+node scripts/admin.mjs setup-link --name "Your Name" --role owner
 ```
-Runs at `http://localhost:8000` using `.env.local` (real `APP_PASSWORD`, `GITHUB_TOKEN`, `GIST_ID`).
 
 ```bash
 npm test
 ```
-Unit tests for dates, quick-add parsing, recurrence, sync merging, reports and the sync API.
+Unit tests for dates, quick-add parsing, recurrence and sync merging, plus Worker tests (PINs, lockouts, setup links, sessions, sync conflicts, isolation between people) against an in-memory SQLite database.
 
 ### Project layout
 
 ```
-public/          static app served by Vercel's CDN
-  index.html, styles.css, sw.js, manifest.webmanifest, icons/
-  js/core.js     pure logic shared with the server (dates, parsing, merge, reports)
-  js/store.js    state, undo, actions, sync client
-  js/ui.js       rendering: board, kanban, focus, Today strip, menus
-  js/sheets.js   task details, quick add, archive, report, digest, backup
-  js/main.js     lock screen, keyboard shortcuts, startup
-api/             auth.js, sync.js, digest.js (routed by server.js)
-lib/             env.js, auth.js, storage.js (GitHub Gist or local file)
+public/            static app served by Cloudflare (Workers Static Assets)
+  index.html, styles.css, sw.js, manifest.webmanifest, _headers, icons/
+  js/core.js       pure logic shared with the Worker (dates, parsing, merge, reports)
+  js/store.js      state, undo, actions, per-person storage, sync client
+  js/ui.js         rendering: board, kanban, focus, Today strip, menus
+  js/sheets.js     task details, quick add, archive, report, digest, backup
+  js/main.js       sign-in screen, keyboard shortcuts, startup
+worker/            Cloudflare Worker: /api/profiles, login, setup, me, logout, sync, digest + daily cron
+migrations/        D1 schema
+scripts/admin.mjs  create a person + one-time setup/reset link; import a board from the old Gist
+wrangler.jsonc     Worker, D1, domain and cron config
 ```
 
 ---
 
-## Deploying Updates to Vercel
+## Admin
+
+Add a person or reset a forgotten PIN (prints nothing secret; the link is written to `.data/setup-link.txt`):
 
 ```bash
-npx vercel --prod
+node scripts/admin.mjs setup-link --name "Ali" --remote
 ```
-or connect this Git repository to your [Vercel Dashboard](https://vercel.com/new).
+
+Running it for someone who already has a PIN makes a **reset** link: choosing a new PIN signs them out everywhere else.
+
+---
+
+## Deploying
+
+```bash
+npx wrangler deploy
+```
+Schema changes: add a file to `migrations/` and run `npm run db:remote`.

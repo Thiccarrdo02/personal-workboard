@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "zawish-workboard",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "none"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "zawish-workboard",
+      "database_id": "4dd331bc-ba64-4f15-a18f-59820cf47049",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // Daily digest at 02:30 UTC = 8:00 AM IST.
+  "triggers": { "crons": ["30 2 * * *"] },
+  "routes": [{ "pattern": "board.zawish.si", "custom_domain": true }],
+  "vars": { "DIGEST_TIMEZONE": "Asia/Kolkata" },
+  "observability": { "enabled": true }
+}

@@ -645,10 +645,11 @@ function openDigestPanel() {
 
   const line = (ok, label) => h('li', {}, h('span', { class: ok ? 'ok' : 'no' }, ok ? '✓' : '○'), label);
   digestApi('status').then(status => {
-    statusList.replaceChildren(
+    setChildren(statusList,
       line(status.channels.telegram, status.channels.telegram ? 'Telegram connected' : status.telegramTokenSet ? 'Telegram bot set — add TELEGRAM_CHAT_ID' : 'Telegram not set up'),
       line(status.channels.email, status.channels.email ? 'Email connected' : 'Email not set up (optional)'),
-      line(status.cronSecretSet, status.cronSecretSet ? 'Daily schedule is active' : 'Daily schedule needs CRON_SECRET')
+      line(true, 'Daily schedule is active (8:00 AM IST)'),
+      status.ownerOnly ? h('li', {}, 'Personal digests for each team member are coming soon.') : null
     );
   }).catch(err => {
     statusList.replaceChildren(h('li', {}, `Could not reach the server: ${err.message}`));
@@ -694,9 +695,9 @@ function openDigestPanel() {
       h('summary', {}, 'How to set it up (5 minutes)'),
       h('ol', {},
         h('li', {}, 'In Telegram, message ', h('code', {}, '@BotFather'), ', send ', h('code', {}, '/newbot'), ' and copy the token it gives you.'),
-        h('li', {}, 'In Vercel → Project → Settings → Environment Variables, add ', h('code', {}, 'TELEGRAM_BOT_TOKEN'), ' and ', h('code', {}, 'CRON_SECRET'), ' (any long random text).'),
-        h('li', {}, 'Redeploy, open your new bot in Telegram and send it “hi”.'),
-        h('li', {}, 'Click “Find my Telegram chat ID” here, then add it as ', h('code', {}, 'TELEGRAM_CHAT_ID'), ' and redeploy.'),
+        h('li', {}, 'In Cloudflare → Workers & Pages → zawish-workboard → Settings → Variables and Secrets, add a secret ', h('code', {}, 'TELEGRAM_BOT_TOKEN'), '.'),
+        h('li', {}, 'Open your new bot in Telegram and send it “hi”.'),
+        h('li', {}, 'Click “Find my Telegram chat ID” here, then add it as the secret ', h('code', {}, 'TELEGRAM_CHAT_ID'), '.'),
         h('li', {}, 'Optional email: add ', h('code', {}, 'RESEND_API_KEY'), ' and ', h('code', {}, 'DIGEST_EMAIL_TO'), ' (free account at resend.com).')
       )
     )
@@ -752,15 +753,16 @@ function openSyncPanel() {
   const detail = h('p', {});
   const draw = () => {
     const last = syncMeta.lastSyncedAt ? formatStamp(syncMeta.lastSyncedAt) : 'not yet';
-    detail.textContent = `${sync.detail || 'Status: ' + sync.status}. Last synced ${last}. ${syncMeta.dirty ? 'This device has changes waiting to upload.' : 'No pending changes on this device.'}${sync.storage ? ` Storage: ${sync.storage}.` : ''}`;
+    const who = currentUser ? `Signed in as ${currentUser.name}. ` : '';
+    detail.textContent = `${who}${sync.detail || 'Status: ' + sync.status}. Last synced ${last}. ${syncMeta.dirty ? 'This device has changes waiting to upload.' : 'No pending changes on this device.'}`;
   };
   draw();
   openPanel(
     sheetHead('Cloud sync'),
-    h('p', {}, 'Your board syncs automatically across your phone, PC and laptop. Edits made on different devices are merged task by task, so nothing gets overwritten.'),
+    h('p', {}, 'Your board syncs automatically across your phone, PC and laptop. Edits made on different devices are merged task by task, so nothing gets overwritten. Signing out removes your board from this device until you sign in again.'),
     detail,
     h('div', { class: 'sheet-actions' },
-      h('button', { type: 'button', class: 'button', onClick: () => { panelDialog.close(); lockBoard(); } }, '🔒 Lock this device'),
+      h('button', { type: 'button', class: 'button', onClick: () => { panelDialog.close(); lockBoard(); } }, 'Sign out of this device'),
       h('span', { class: 'spacer' }),
       h('button', {
         type: 'button', class: 'button primary',
@@ -834,6 +836,6 @@ function openMoreMenu(anchor) {
     menuItem('Backup & restore', openBackupPanel, { icon: '⇅' }),
     menuItem('Sync status', openSyncPanel, { icon: '⟳' }),
     touchQuery.matches ? null : menuItem('Keyboard shortcuts', openShortcutsPanel, { icon: '⌘', hint: '?' }),
-    menuItem('Lock board', lockBoard, { icon: '🔒' })
+    menuItem('Sign out of this device', lockBoard, { icon: '🔒' })
   ));
 }

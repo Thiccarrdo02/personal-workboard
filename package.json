@@ -1,13 +1,15 @@
 {
   "name": "personal-todo-manager",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "private": true,
-  "description": "Personal task manager for PC, laptop and phone with due dates, recurring tasks, kanban and cross-device sync",
+  "description": "ZAWISH Workboard: personal task boards for the team, on Cloudflare Workers + D1",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node scripts/dev.js",
-    "test": "node --test \"test/*.test.js\"",
-    "deploy": "npx vercel"
+    "dev": "wrangler dev",
+    "db:local": "wrangler d1 migrations apply zawish-workboard --local",
+    "db:remote": "wrangler d1 migrations apply zawish-workboard --remote",
+    "test": "node --test \"test/*.test.js\" \"test/*.test.mjs\"",
+    "deploy": "wrangler deploy",
+    "admin": "node scripts/admin.mjs"
   },
   "keywords": [
     "todo",
@@ -16,5 +18,8 @@
     "cross-device"
   ],
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "wrangler": "^4.152.0"
+  }
 }

@@ -16,13 +16,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="stylesheet" href="styles.css" />
   <title>My Workboard</title>
-  <script>
-    // Apply the saved theme before first paint to avoid a flash.
-    try {
-      var savedPrefs = JSON.parse(localStorage.getItem('personal-workboard-prefs') || '{}');
-      if (savedPrefs.theme === 'light' || savedPrefs.theme === 'dark') document.documentElement.dataset.theme = savedPrefs.theme;
-    } catch (e) {}
-  </script>
+  <script src="js/theme.js"></script>
   <script src="js/core.js" defer></script>
   <script src="js/store.js" defer></script>
   <script src="js/ui.js" defer></script>
@@ -30,36 +24,48 @@
   <script src="js/main.js" defer></script>
 </head>
 <body>
-  <div id="lockScreen" class="lock-screen hidden" aria-modal="true" role="dialog" aria-label="Enter Passcode">
+  <div id="lockScreen" class="lock-screen hidden" aria-modal="true" role="dialog" aria-label="Sign in">
     <div class="lock-card" id="lockCard">
-      <div class="lock-icon-wrap">🔒</div>
-      <h2 class="lock-title">Enter Passcode</h2>
-      <p class="lock-desc" id="lockDesc">Enter your 4-digit PIN to access your personal board</p>
+      <div class="lock-icon-wrap" id="lockAvatar" aria-hidden="true">🔒</div>
+      <h2 class="lock-title" id="lockTitle">One moment…</h2>
+      <p class="lock-desc" id="lockDesc"></p>
 
-      <input id="pinHiddenInput" class="pin-hidden-input" type="password" inputmode="numeric" maxlength="4" autocomplete="off" />
+      <div class="profile-list" id="profileList" hidden></div>
 
-      <div class="pin-dots" id="pinDots" aria-label="PIN entry status">
-        <span class="pin-dot"></span>
-        <span class="pin-dot"></span>
-        <span class="pin-dot"></span>
-        <span class="pin-dot"></span>
+      <div class="pin-entry" id="pinEntry" hidden>
+        <input id="pinHiddenInput" class="pin-hidden-input" type="password" inputmode="numeric" maxlength="6" autocomplete="off" aria-label="PIN" />
+
+        <div class="pin-dots" id="pinDots" aria-hidden="true">
+          <span class="pin-dot"></span>
+          <span class="pin-dot"></span>
+          <span class="pin-dot"></span>
+          <span class="pin-dot"></span>
+          <span class="pin-dot"></span>
+          <span class="pin-dot"></span>
+        </div>
+
+        <div class="keypad">
+          <button class="keypad-btn" type="button" data-val="1">1</button>
+          <button class="keypad-btn" type="button" data-val="2">2</button>
+          <button class="keypad-btn" type="button" data-val="3">3</button>
+          <button class="keypad-btn" type="button" data-val="4">4</button>
+          <button class="keypad-btn" type="button" data-val="5">5</button>
+          <button class="keypad-btn" type="button" data-val="6">6</button>
+          <button class="keypad-btn" type="button" data-val="7">7</button>
+          <button class="keypad-btn" type="button" data-val="8">8</button>
+          <button class="keypad-btn" type="button" data-val="9">9</button>
+          <div class="keypad-btn action keypad-spacer"></div>
+          <button class="keypad-btn" type="button" data-val="0">0</button>
+          <button class="keypad-btn action" type="button" id="pinDeleteBtn" title="Delete" aria-label="Delete last digit">⌫</button>
+        </div>
+
+        <label class="remember-row">
+          <input type="checkbox" id="rememberDevice" checked />
+          <span>Keep me signed in on this device</span>
+        </label>
       </div>
 
-      <div class="keypad">
-        <button class="keypad-btn" type="button" data-val="1">1</button>
-        <button class="keypad-btn" type="button" data-val="2">2</button>
-        <button class="keypad-btn" type="button" data-val="3">3</button>
-        <button class="keypad-btn" type="button" data-val="4">4</button>
-        <button class="keypad-btn" type="button" data-val="5">5</button>
-        <button class="keypad-btn" type="button" data-val="6">6</button>
-        <button class="keypad-btn" type="button" data-val="7">7</button>
-        <button class="keypad-btn" type="button" data-val="8">8</button>
-        <button class="keypad-btn" type="button" data-val="9">9</button>
-        <div class="keypad-btn action" style="visibility: hidden;"></div>
-        <button class="keypad-btn" type="button" data-val="0">0</button>
-        <button class="keypad-btn action" type="button" id="pinDeleteBtn" title="Delete">⌫</button>
-      </div>
-
+      <button type="button" class="lock-link" id="lockBack" hidden>← Choose another profile</button>
       <div id="lockError" class="lock-error" role="alert"></div>
     </div>
   </div>

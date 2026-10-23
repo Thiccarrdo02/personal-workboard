@@ -2,10 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "workboard-dev",
+      "name": "workboard-cf",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["scripts/dev.js"],
-      "port": 8123
+      "runtimeArgs": ["node_modules/wrangler/bin/wrangler.js", "dev", "--port", "8787"],
+      "port": 8787
     }
   ]
 }

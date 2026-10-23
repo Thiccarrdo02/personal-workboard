@@ -1,51 +1,195 @@
-/* My Workboard — lock screen, keyboard shortcuts, toolbar wiring and startup. */
+/* My Workboard — sign-in, keyboard shortcuts, toolbar wiring and startup. */
 
 // ---------------------------------------------------------------------------
-// Lock screen
+// Sign-in screen: pick your profile, enter your 6-digit PIN once per device.
+// A one-time setup link (#setup=…) lets someone choose their PIN.
 // ---------------------------------------------------------------------------
 
+const PIN_LENGTH = 6;
 const appMain = document.getElementById('appMain');
 const lockScreen = document.getElementById('lockScreen');
 const lockCard = document.getElementById('lockCard');
+const lockAvatar = document.getElementById('lockAvatar');
+const lockTitle = document.getElementById('lockTitle');
+const lockDesc = document.getElementById('lockDesc');
 const lockError = document.getElementById('lockError');
+const profileList = document.getElementById('profileList');
+const pinEntry = document.getElementById('pinEntry');
 const pinDots = lockScreen.querySelectorAll('.pin-dot');
 const pinHiddenInput = document.getElementById('pinHiddenInput');
 const pinDeleteBtn = document.getElementById('pinDeleteBtn');
+const rememberDevice = document.getElementById('rememberDevice');
+const lockBack = document.getElementById('lockBack');
 
 let enteredPin = '';
 let isVerifying = false;
+let profiles = [];
+// { kind: 'loading' } | { kind: 'profiles' } | { kind: 'pin', user } | { kind: 'setup', token, user, purpose, firstPin }
+let lockMode = { kind: 'loading' };
 
-function showLockScreen(msg = '') {
+function initials(name) {
+  return String(name || '').split(/\s+/).filter(Boolean).slice(0, 2).map(word => word[0].toUpperCase()).join('') || '?';
+}
+
+// Same rule as the server: no repeats (000000) or straight runs (123456 / 987654).
+function isWeakPin(pin) {
+  if (/^(\d)\1+$/.test(pin)) return true;
+  const digits = [...pin].map(Number);
+  const steps = new Set(digits.slice(1).map((d, i) => d - digits[i]));
+  return steps.size === 1 && (steps.has(1) || steps.has(-1));
+}
+
+async function postJson(path, body, token = null) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(path, { method: 'POST', headers, body: JSON.stringify(body) });
+  const json = await res.json().catch(() => ({}));
+  return { ok: res.ok && json.ok !== false, status: res.status, body: json };
+}
+
+function setLockError(message) {
+  lockError.textContent = message || '';
+  lockError.classList.toggle('visible', Boolean(message));
+}
+
+function resetPin() {
+  enteredPin = '';
+  pinHiddenInput.value = '';
+  updatePinDots();
+}
+
+// Desktop typing goes to a hidden input; phones use the on-screen keypad
+// (focusing the input there would pop the system keyboard over it).
+function focusPin() {
+  if (!pinEntry.hidden && !touchQuery.matches) setTimeout(() => pinHiddenInput.focus(), 80);
+}
+
+function renderLock() {
+  const { kind } = lockMode;
+  profileList.hidden = kind !== 'profiles';
+  pinEntry.hidden = kind !== 'pin' && kind !== 'setup';
+  lockBack.hidden = !(kind === 'pin' && profiles.length > 1);
+  lockAvatar.classList.toggle('initials', kind === 'pin' || kind === 'setup');
+
+  if (kind === 'loading') {
+    lockAvatar.textContent = '🔒';
+    lockTitle.textContent = 'One moment…';
+    lockDesc.textContent = '';
+  } else if (kind === 'profiles') {
+    lockAvatar.textContent = '🔒';
+    lockTitle.textContent = 'Who’s working?';
+    lockDesc.textContent = profiles.length ? 'Tap your name to open your board.' : 'No profiles yet.';
+    profileList.replaceChildren(...profiles.map(profile => h('button', {
+      type: 'button',
+      class: 'profile-button',
+      onClick: () => selectProfile(profile)
+    },
+    h('span', { class: 'profile-avatar', 'aria-hidden': 'true' }, initials(profile.name)),
+    h('span', { class: 'profile-name' }, profile.name),
+    profile.hasPin ? null : h('span', { class: 'profile-note' }, 'Not set up yet'))));
+  } else if (kind === 'pin') {
+    lockAvatar.textContent = initials(lockMode.user.name);
+    lockTitle.textContent = lockMode.user.name;
+    lockDesc.textContent = `Enter your ${PIN_LENGTH}-digit PIN`;
+  } else if (kind === 'setup') {
+    lockAvatar.textContent = initials(lockMode.user.name);
+    lockTitle.textContent = lockMode.purpose === 'reset' ? `New PIN for ${lockMode.user.name}` : `Welcome, ${lockMode.user.name}`;
+    lockDesc.textContent = lockMode.firstPin
+      ? 'Enter the same PIN again to confirm.'
+      : `Choose a ${PIN_LENGTH}-digit PIN. You only need it once on each device.`;
+  }
+}
+
+function openLock() {
   closePopover();
   document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
   lockScreen.classList.remove('hidden');
   appMain.setAttribute('inert', '');
-  enteredPin = '';
-  pinHiddenInput.value = '';
-  updatePinDots();
-  lockError.textContent = msg;
-  lockError.classList.toggle('visible', Boolean(msg));
-  setTimeout(() => pinHiddenInput.focus(), 80);
+}
+
+async function loadProfiles() {
+  const res = await fetch('/api/profiles', { cache: 'no-store' });
+  const body = await res.json();
+  profiles = body.profiles || [];
+}
+
+async function showProfiles(message = '') {
+  lockMode = { kind: 'loading' };
+  renderLock();
+  try {
+    await loadProfiles();
+  } catch (err) {
+    profiles = [];
+    lockMode = { kind: 'profiles' };
+    renderLock();
+    setLockError('Can’t reach the server. Check your connection and reload.');
+    return;
+  }
+  // With a single profile there is nothing to pick.
+  if (profiles.length === 1 && profiles[0].hasPin) {
+    selectProfile(profiles[0], message);
+    return;
+  }
+  lockMode = { kind: 'profiles' };
+  renderLock();
+  setLockError(message);
+}
+
+function selectProfile(profile, message = '') {
+  if (!profile.hasPin) {
+    setLockError(`${profile.name} isn’t set up yet. Ask Raza for a setup link.`);
+    return;
+  }
+  lockMode = { kind: 'pin', user: profile };
+  resetPin();
+  renderLock();
+  setLockError(message);
+  focusPin();
+}
+
+// Shows the sign-in screen; with `user` it goes straight to that person's PIN.
+function showLockScreen(message = '', user = null) {
+  openLock();
+  if (!user) {
+    showProfiles(message);
+    return;
+  }
+  selectProfile({ ...user, hasPin: true }, message);
+  loadProfiles().then(renderLock).catch(() => {});
 }
 
 function hideLockScreen() {
   lockScreen.classList.add('hidden');
   appMain.removeAttribute('inert');
-  enteredPin = '';
-  pinHiddenInput.value = '';
-  updatePinDots();
-  lockError.textContent = '';
-  lockError.classList.remove('visible');
+  resetPin();
+  setLockError('');
 }
 
 function isLocked() {
   return !lockScreen.classList.contains('hidden');
 }
 
-function lockBoard() {
-  authToken = '';
-  localStorage.removeItem(AUTH_TOKEN_STORAGE);
-  showLockScreen('Workboard locked');
+async function signedIn(user, token, remember) {
+  saveSession(user, token, remember);
+  activateUser(user, token);
+  hideLockScreen();
+  renderNow();
+  await pullRemote({ manual: true });
+  if (syncMeta.dirty) schedulePush(0);
+}
+
+// Signs this device out. Unsynced edits are uploaded first when possible.
+async function lockBoard() {
+  if (!currentUser) {
+    showLockScreen();
+    return;
+  }
+  if (syncMeta.dirty) await pushRemote();
+  if (syncMeta.dirty && !confirm('Some changes haven’t uploaded yet (are you offline?). Sign out anyway and lose them on this device?')) return;
+  postJson('/api/logout', {}, authToken).catch(() => {});
+  deactivateUser();
+  renderNow();
+  showLockScreen('Signed out on this device.');
 }
 
 function updatePinDots() {
@@ -53,11 +197,11 @@ function updatePinDots() {
 }
 
 async function handlePinDigit(digit) {
-  if (isVerifying || enteredPin.length >= 4) return;
+  if (isVerifying || pinEntry.hidden || enteredPin.length >= PIN_LENGTH) return;
   enteredPin += digit;
   pinHiddenInput.value = enteredPin;
   updatePinDots();
-  if (enteredPin.length === 4) await submitPin();
+  if (enteredPin.length === PIN_LENGTH) await submitPin();
 }
 
 function handlePinDelete() {
@@ -65,65 +209,117 @@ function handlePinDelete() {
   enteredPin = enteredPin.slice(0, -1);
   pinHiddenInput.value = enteredPin;
   updatePinDots();
-  lockError.textContent = '';
-  lockError.classList.remove('visible');
+  setLockError('');
 }
 
 async function submitPin() {
   if (isVerifying) return;
-  isVerifying = true;
-  lockError.textContent = '';
-  lockError.classList.remove('visible');
+  const pin = enteredPin;
 
+  if (lockMode.kind === 'setup' && !lockMode.firstPin) {
+    if (isWeakPin(pin)) {
+      showPinError('That PIN is too easy to guess. Avoid repeats and runs like 123456.');
+      return;
+    }
+    lockMode.firstPin = pin;
+    resetPin();
+    renderLock();
+    setLockError('');
+    return;
+  }
+  if (lockMode.kind === 'setup' && lockMode.firstPin !== pin) {
+    lockMode.firstPin = null;
+    renderLock();
+    showPinError('Those PINs didn’t match. Choose your PIN again.');
+    return;
+  }
+
+  isVerifying = true;
+  setLockError('');
   try {
-    const res = await fetch('/api/auth', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin: enteredPin })
-    });
-    const body = await res.json();
-    if (res.ok && body.token) {
-      authToken = body.token;
-      localStorage.setItem(AUTH_TOKEN_STORAGE, authToken);
-      hideLockScreen();
-      await pullRemote({ manual: true });
-      if (syncMeta.dirty) schedulePush(0);
+    const remember = rememberDevice.checked;
+    const res = lockMode.kind === 'setup'
+      ? await postJson('/api/setup', { action: 'complete', token: lockMode.token, pin, remember })
+      : await postJson('/api/login', { userId: lockMode.user.id, pin, remember });
+    if (res.ok && res.body.token) {
+      await signedIn(res.body.user, res.body.token, remember);
+    } else if (lockMode.kind === 'setup' && res.status === 404) {
+      showProfiles(res.body.error);
     } else {
-      showPinError(body.error || 'Incorrect PIN. Please try again.');
+      if (lockMode.kind === 'setup') {
+        lockMode.firstPin = null;
+        renderLock();
+      }
+      showPinError(res.body.error || 'Something went wrong. Please try again.');
     }
   } catch (err) {
-    showPinError('Network error. Check connection and retry.');
+    showPinError('Network error. Check your connection and retry.');
   } finally {
     isVerifying = false;
   }
 }
 
 function showPinError(msg) {
-  lockError.textContent = msg;
-  lockError.classList.add('visible');
+  setLockError(msg);
   lockCard.classList.add('shake');
   setTimeout(() => {
     lockCard.classList.remove('shake');
-    enteredPin = '';
-    pinHiddenInput.value = '';
-    updatePinDots();
-    pinHiddenInput.focus();
+    resetPin();
+    focusPin();
   }, 420);
 }
+
+function readSetupToken() {
+  const match = /(?:^#|&)setup=([\w-]+)/.exec(location.hash);
+  return match ? match[1] : null;
+}
+
+async function startSetup(token) {
+  // Take the token out of the address bar and history.
+  history.replaceState(null, '', location.pathname + location.search);
+  openLock();
+  lockMode = { kind: 'loading' };
+  renderLock();
+  try {
+    const res = await postJson('/api/setup', { action: 'check', token });
+    if (!res.ok) {
+      showProfiles(res.body.error || 'This link is invalid or has expired.');
+      return;
+    }
+    lockMode = { kind: 'setup', token, user: res.body.user, purpose: res.body.purpose, firstPin: null };
+    resetPin();
+    renderLock();
+    setLockError('');
+    focusPin();
+  } catch (err) {
+    showProfiles('Network error. Check your connection and open the link again.');
+  }
+}
+
+window.addEventListener('hashchange', () => {
+  const token = readSetupToken();
+  if (token) startSetup(token);
+});
 
 document.querySelectorAll('.keypad-btn[data-val]').forEach(btn => {
   btn.addEventListener('click', () => handlePinDigit(btn.dataset.val));
 });
 pinDeleteBtn.addEventListener('click', handlePinDelete);
+lockBack.addEventListener('click', () => {
+  lockMode = { kind: 'profiles' };
+  resetPin();
+  renderLock();
+  setLockError('');
+});
 lockCard.addEventListener('click', event => {
-  if (!event.target.closest('.keypad-btn')) pinHiddenInput.focus();
+  if (!event.target.closest('.keypad-btn, button, input, label')) focusPin();
 });
 pinHiddenInput.addEventListener('input', () => {
-  const val = pinHiddenInput.value.replace(/[^0-9]/g, '').slice(0, 4);
+  const val = pinHiddenInput.value.replace(/[^0-9]/g, '').slice(0, PIN_LENGTH);
   enteredPin = val;
   pinHiddenInput.value = val;
   updatePinDots();
-  if (enteredPin.length === 4) submitPin();
+  if (enteredPin.length === PIN_LENGTH) submitPin();
 });
 
 // ---------------------------------------------------------------------------
@@ -334,8 +530,19 @@ renderSyncBadge();
 renderNow();
 startSyncLoops();
 
-if (!authToken) showLockScreen();
-else pullRemote({ manual: true });
+// Open straight into the last person's board if this device remembers them.
+const setupToken = readSetupToken();
+const rememberedId = lastUserId();
+const remembered = rememberedId && getSession(rememberedId);
+if (setupToken) {
+  startSetup(setupToken);
+} else if (remembered) {
+  activateUser({ id: rememberedId, name: remembered.name, role: remembered.role }, remembered.token);
+  renderNow();
+  pullRemote({ manual: true });
+} else {
+  showLockScreen();
+}
 
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   window.addEventListener('load', () => {

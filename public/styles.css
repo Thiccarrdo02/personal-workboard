@@ -1478,6 +1478,74 @@ main.app[inert] ~ .bottom-nav { visibility: hidden; }
 }
 .lock-error.visible { opacity: 1; }
 
+.lock-icon-wrap.initials { font-size: 22px; font-weight: 850; letter-spacing: -.02em; }
+.pin-entry { display: flex; flex-direction: column; align-items: center; }
+.pin-dots { gap: 13px; }
+.keypad-spacer { visibility: hidden; }
+
+.profile-list {
+  width: 100%;
+  display: grid;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.profile-button {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 14px 10px 10px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  text-align: left;
+  transition: border-color .15s ease, transform .1s ease;
+}
+.profile-button:hover { border-color: var(--line-strong); }
+.profile-button:active { transform: scale(.98); }
+.profile-button:focus-visible { outline: none; box-shadow: var(--focus); }
+
+.profile-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 850;
+  font-size: 15px;
+}
+.profile-name { font-size: 16px; font-weight: 780; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-note { font-size: 11px; font-weight: 750; color: var(--muted); }
+
+.remember-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--muted);
+  cursor: pointer;
+}
+.remember-row input { width: 17px; height: 17px; accent-color: var(--ink); margin: 0; }
+
+.lock-link {
+  margin-top: 12px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 6px 10px;
+  border-radius: 9px;
+}
+.lock-link:hover { color: var(--ink); background: var(--surface-3); }
+
 .shake { animation: shakeAnim .38s ease-in-out; }
 @keyframes shakeAnim {
   0%, 100% { transform: translateX(0); }

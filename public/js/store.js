@@ -2,14 +2,13 @@
 
 const Core = window.WorkboardCore;
 
-const STORAGE_KEY = 'personal-workboard-v3';
-const LEGACY_STORAGE_KEYS = ['personal-workboard-v2', 'personal-workboard-v1'];
-const LEGACY_TIMESTAMP_KEY = 'personal-workboard-updated-at';
-const LEGACY_DIRTY_KEY = 'personal-workboard-dirty';
-const SYNC_META_KEY = 'personal-workboard-sync';
-const AUTH_TOKEN_STORAGE = 'personal-workboard-auth-token';
+// Each person who signs in on this device gets their own local copy and sync state.
+const boardKey = userId => `workboard:board:${userId}`;
+const syncKey = userId => `workboard:sync:${userId}`;
+const SESSIONS_KEY = 'workboard:sessions';
+const CURRENT_USER_KEY = 'workboard:current-user';
 const PREFS_KEY = 'personal-workboard-prefs';
-const SYNC_POLL_MS = 8000;
+const SYNC_POLL_MS = 20000;
 
 function readJSON(key, fallback) {
   try {
@@ -38,15 +37,66 @@ function savePrefs() {
   writeJSON(PREFS_KEY, prefs);
 }
 
-let authToken = localStorage.getItem(AUTH_TOKEN_STORAGE) || '';
-const syncMeta = Object.assign({ baseRev: null, dirty: false, lastSyncedAt: 0 }, readJSON(SYNC_META_KEY, {}));
+// ---------------------------------------------------------------------------
+// Signed-in person and device sessions
+//
+// "Keep me signed in" sessions live in localStorage; the others in
+// sessionStorage, so they end when the browser closes.
+// ---------------------------------------------------------------------------
+
+let currentUser = null; // { id, name, role }
+let authToken = '';
+
+function readSessionMap(storage) {
+  try {
+    return JSON.parse(storage.getItem(SESSIONS_KEY) || '{}') || {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function writeSessionMap(storage, map) {
+  try {
+    storage.setItem(SESSIONS_KEY, JSON.stringify(map));
+  } catch (e) {
+    console.warn('Could not save session:', e);
+  }
+}
+
+function getSession(userId) {
+  return readSessionMap(sessionStorage)[userId] || readSessionMap(localStorage)[userId] || null;
+}
+
+function saveSession(user, token, remember) {
+  forgetSession(user.id);
+  const storage = remember ? localStorage : sessionStorage;
+  const map = readSessionMap(storage);
+  map[user.id] = { token, name: user.name, role: user.role };
+  writeSessionMap(storage, map);
+}
+
+function forgetSession(userId) {
+  for (const storage of [localStorage, sessionStorage]) {
+    const map = readSessionMap(storage);
+    if (map[userId]) {
+      delete map[userId];
+      writeSessionMap(storage, map);
+    }
+  }
+}
+
+function lastUserId() {
+  return localStorage.getItem(CURRENT_USER_KEY);
+}
+
+const syncMeta = { baseRev: null, dirty: false, lastSyncedAt: 0 };
 
 function saveSyncMeta() {
-  writeJSON(SYNC_META_KEY, syncMeta);
+  if (currentUser) writeJSON(syncKey(currentUser.id), syncMeta);
 }
 
 function persistData() {
-  writeJSON(STORAGE_KEY, data);
+  if (currentUser) writeJSON(boardKey(currentUser.id), data);
 }
 
 function starterData() {
@@ -56,28 +106,42 @@ function starterData() {
   });
 }
 
-function loadData() {
-  const current = readJSON(STORAGE_KEY, null);
-  if (current) return Core.normalizeData(current);
-
-  // First run of v3 on this device: migrate the v2 board. If it had unsynced
-  // edits, stamp them with the old save time so they win over the cloud copy.
-  for (const key of LEGACY_STORAGE_KEYS) {
-    const legacy = readJSON(key, null);
-    if (!legacy) continue;
-    const dirty = localStorage.getItem(LEGACY_DIRTY_KEY) === 'true';
-    const legacyUpdatedAt = dirty ? (parseInt(localStorage.getItem(LEGACY_TIMESTAMP_KEY), 10) || Date.now()) : 0;
-    const migrated = Core.normalizeData(legacy, { legacyUpdatedAt });
-    syncMeta.dirty = dirty;
-    syncMeta.baseRev = null;
-    saveSyncMeta();
-    writeJSON(STORAGE_KEY, migrated);
-    return migrated;
-  }
-  return starterData();
+function loadData(userId) {
+  const saved = readJSON(boardKey(userId), null);
+  return saved ? Core.normalizeData(saved) : starterData();
 }
 
-let data = loadData();
+// Nothing is shown until someone signs in.
+let data = starterData();
+
+// Switches the app to this person's board (local copy first, then the cloud).
+function activateUser(user, token) {
+  currentUser = user;
+  authToken = token;
+  localStorage.setItem(CURRENT_USER_KEY, user.id);
+  Object.assign(syncMeta, { baseRev: null, dirty: false, lastSyncedAt: 0 }, readJSON(syncKey(user.id), {}));
+  data = loadData(user.id);
+  undoStack.length = 0;
+  sync.editSeq = 0;
+  sync.conflicts = 0;
+  setSyncStatus('idle');
+}
+
+// Signs this device out. The local copy is removed so the next person on a
+// shared device can't see it.
+function deactivateUser() {
+  if (!currentUser) return;
+  forgetSession(currentUser.id);
+  localStorage.removeItem(boardKey(currentUser.id));
+  localStorage.removeItem(syncKey(currentUser.id));
+  localStorage.removeItem(CURRENT_USER_KEY);
+  currentUser = null;
+  authToken = '';
+  data = starterData();
+  undoStack.length = 0;
+  clearTimeout(sync.pushTimer);
+  clearTimeout(sync.retryTimer);
+}
 
 // ---------------------------------------------------------------------------
 // Lookups
@@ -442,11 +506,18 @@ function markSynced() {
   }
 }
 
+// The server no longer accepts this device's session (expired, PIN reset, removed).
+// The local copy is kept so unsynced edits upload after signing in again.
 function handleUnauthorized() {
+  if (currentUser) forgetSession(currentUser.id);
   authToken = '';
-  localStorage.removeItem(AUTH_TOKEN_STORAGE);
   setSyncStatus('error', 'Signed out');
-  showLockScreen('Session expired. Please enter PIN again.');
+  showLockScreen('You were signed out. Please enter your PIN again.', currentUser);
+}
+
+// True while the request started for `userId` still belongs to the person on screen.
+function stillActive(userId) {
+  return Boolean(currentUser && currentUser.id === userId && authToken);
 }
 
 // Returns true when the merged board still has changes the cloud doesn't.
@@ -471,20 +542,23 @@ function applyRemote(remoteRaw, rev) {
 
 async function pullRemote({ manual = false } = {}) {
   if (!authToken || sync.pulling) return;
+  const userId = currentUser.id;
   sync.pulling = true;
   if (manual) setSyncStatus('syncing', 'Checking the cloud…');
   try {
-    const res = await fetch('/api/sync', {
+    // Passing our revision lets the server answer "unchanged" without the board.
+    const res = await fetch(`/api/sync?rev=${encodeURIComponent(syncMeta.baseRev || '')}`, {
       headers: { 'Authorization': `Bearer ${authToken}` },
       cache: 'no-store'
     });
+    if (!stillActive(userId)) return;
     if (res.status === 401) {
       handleUnauthorized();
       return;
     }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const body = await res.json();
-    sync.storage = body.storage || sync.storage;
+    if (!stillActive(userId)) return;
 
     if (!body.found) {
       // Empty cloud: upload this board.
@@ -532,6 +606,7 @@ async function pushRemote() {
   sync.pushing = true;
   sync.needsPush = false;
   const seq = sync.editSeq;
+  const userId = currentUser.id;
   let failed = false;
   let conflict = false;
 
@@ -541,13 +616,14 @@ async function pushRemote() {
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
       body: JSON.stringify({ schema: Core.SCHEMA, baseRev: syncMeta.baseRev, data })
     });
+    if (!stillActive(userId)) return;
     if (res.status === 401) {
       handleUnauthorized();
       return;
     }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const body = await res.json();
-    sync.storage = body.storage || sync.storage;
+    if (!stillActive(userId)) return;
 
     if (body.conflict) {
       // Another device saved first: merge its board into ours and try again.
@@ -566,13 +642,14 @@ async function pushRemote() {
     }
   } catch (err) {
     failed = true;
+    if (!stillActive(userId)) return;
     console.warn('Sync push failed:', err);
     sync.retryDelay = Math.min(60000, (sync.retryDelay || 1500) * 2);
     setSyncStatus(navigator.onLine ? 'error' : 'offline', navigator.onLine ? 'Sync paused — saved on this device' : 'Offline — saved on this device');
     sync.retryTimer = setTimeout(pushRemote, sync.retryDelay);
   } finally {
     sync.pushing = false;
-    if (!failed && (conflict || sync.needsPush || syncMeta.dirty)) {
+    if (stillActive(userId) && !failed && (conflict || sync.needsPush || syncMeta.dirty)) {
       schedulePush(conflict ? Math.min(8000, 250 * 2 ** Math.min(sync.conflicts, 5)) : 250);
     }
   }
