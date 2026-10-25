@@ -6,6 +6,7 @@ import { HttpError, json, readJson } from './http.js';
 import { authenticate, bearerToken, checkSetupLink, completeSetup, listProfiles, login, revokeSession } from './auth.js';
 import { getBoard, saveBoard } from './board.js';
 import { handleDigest, sendScheduledDigest } from './digest.js';
+import { listTeam, pendingCount, requestAccess, requestStatus, requireOwner, teamAction } from './team.js';
 
 // Tests pass env.NOW to control the clock.
 function clock(env) {
@@ -40,6 +41,27 @@ async function route(request, env, url) {
       : await checkSetupLink(env, request, body, now));
   }
 
+  if (pathname === '/api/request' && method === 'POST') {
+    return json(await requestAccess(env, request, await readJson(request), now));
+  }
+
+  if (pathname === '/api/request' && method === 'GET') {
+    return json(await requestStatus(env, bearerToken(request), now));
+  }
+
+  if (pathname === '/api/team' && method === 'GET') {
+    const session = await requireSession(env, request);
+    requireOwner(session);
+    return json(await listTeam(env, now));
+  }
+
+  if (pathname === '/api/team' && method === 'POST') {
+    const body = await readJson(request);
+    const session = await requireSession(env, request);
+    requireOwner(session);
+    return json(await teamAction(env, session, body, now));
+  }
+
   if (pathname === '/api/me' && method === 'GET') {
     const session = await requireSession(env, request);
     return json({ ok: true, user: session.user });
@@ -53,7 +75,10 @@ async function route(request, env, url) {
 
   if (pathname === '/api/sync' && method === 'GET') {
     const session = await requireSession(env, request);
-    return json(await getBoard(env, session.user.id, url.searchParams.get('rev')));
+    const result = await getBoard(env, session.user.id, url.searchParams.get('rev'));
+    // The owner's app shows a badge when someone is waiting to join.
+    if (session.user.role === 'owner') result.teamPending = await pendingCount(env);
+    return json(result);
   }
 
   if (pathname === '/api/sync' && method === 'POST') {

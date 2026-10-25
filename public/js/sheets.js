@@ -805,6 +805,201 @@ function openShortcutsPanel() {
 }
 
 // ---------------------------------------------------------------------------
+// Team (owner only): add members, approve requests, rename / reset / remove.
+// Shows names and last activity only, never anyone's tasks.
+// ---------------------------------------------------------------------------
+
+let teamPending = null;
+
+function isOwner() {
+  return Boolean(currentUser && currentUser.role === 'owner');
+}
+
+// Badge on the More buttons; a toast when a new request arrives.
+function updateTeamBadge(count) {
+  if (!isOwner()) count = 0;
+  const previous = teamPending;
+  teamPending = count;
+  for (const button of [document.getElementById('moreButton'), document.getElementById('navMore')]) {
+    button.classList.toggle('has-badge', count > 0);
+    button.dataset.badge = count > 0 ? String(count) : '';
+  }
+  if (previous !== null && count > previous) {
+    showToast(count === 1 ? 'Someone is waiting to join your team' : `${count} people are waiting to join`, {
+      actionLabel: 'Review',
+      onAction: () => openTeamPanel()
+    });
+  }
+}
+
+// Called whenever the signed-in person changes, so nobody sees the owner's badge.
+function resetTeamBadge() {
+  updateTeamBadge(0);
+  teamPending = null;
+}
+
+async function teamApi(body = null) {
+  const res = await fetch('/api/team', body
+    ? { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` }, body: JSON.stringify(body) }
+    : { headers: { Authorization: `Bearer ${authToken}` }, cache: 'no-store' });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.ok === false) throw new Error(json.error || `HTTP ${res.status}`);
+  return json;
+}
+
+function relativeTime(ts) {
+  if (!ts) return 'never';
+  const minutes = Math.round((Date.now() - ts) / 60000);
+  if (minutes < 2) return 'just now';
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} h ago`;
+  const days = Math.round(hours / 24);
+  return days < 30 ? `${days} ${days === 1 ? 'day' : 'days'} ago` : formatStamp(ts);
+}
+
+// The link to send someone, with Copy / WhatsApp / Share.
+function shareLinkBox(result) {
+  const first = result.user.name.split(/\s+/)[0];
+  const link = `${location.origin}/#setup=${result.token}`;
+  const message = result.purpose === 'reset'
+    ? `Hi ${first}, here’s a link to set a new PIN for ZAWISH Workboard: ${link}\nIt works once and expires in 3 days.`
+    : `Hi ${first}, you’re invited to ZAWISH Workboard: ${link}\nOpen it, choose a 6-digit PIN, and you’ll get your own private board. The link works once and expires in 3 days.`;
+  const field = h('input', { type: 'text', readOnly: true, value: link, 'aria-label': 'Link', onFocus: event => event.target.select() });
+  return h('div', { class: 'share-box' },
+    h('p', {}, h('strong', {}, result.purpose === 'reset' ? `New PIN link for ${result.user.name}` : `Invite link for ${result.user.name}`),
+      ' · works once, expires in 3 days. Send it only to them.'),
+    field,
+    h('div', { class: 'sheet-actions' },
+      h('a', { class: 'button primary', href: `https://wa.me/?text=${encodeURIComponent(message)}`, target: '_blank', rel: 'noopener noreferrer' }, 'Send on WhatsApp'),
+      h('button', { type: 'button', class: 'button', onClick: () => copyText(message) }, 'Copy message'),
+      navigator.share ? h('button', { type: 'button', class: 'button', onClick: () => navigator.share({ text: message }).catch(() => {}) }, 'Share…') : null
+    )
+  );
+}
+
+function openTeamPanel({ focusAdd = false } = {}) {
+  if (!isOwner()) return;
+  const shareArea = h('div');
+  const list = h('div', { class: 'sheet-section' }, h('p', {}, 'Loading the team…'));
+  const nameInput = h('input', { type: 'text', placeholder: 'Their name, e.g. Ali Khan', maxLength: 40, 'aria-label': 'New member name', enterKeyHint: 'done' });
+  const addButton = h('button', { type: 'button', class: 'button primary' }, 'Create invite link');
+
+  const act = async (body, button) => {
+    if (button) button.disabled = true;
+    try {
+      const result = await teamApi(body);
+      await draw();
+      return result;
+    } catch (err) {
+      showToast(err.message);
+      if (button) button.disabled = false;
+      return null;
+    }
+  };
+
+  const add = async () => {
+    const name = nameInput.value.replace(/\s+/g, ' ').trim();
+    if (name.length < 2) {
+      nameInput.focus();
+      return;
+    }
+    const result = await act({ action: 'add', name }, addButton);
+    addButton.disabled = false;
+    if (result) {
+      nameInput.value = '';
+      shareArea.replaceChildren(shareLinkBox(result));
+    }
+  };
+  addButton.addEventListener('click', add);
+  nameInput.addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      add();
+    }
+  });
+
+  const showLink = async (member, button) => {
+    const result = await act({ action: 'link', userId: member.id }, button);
+    if (result) shareArea.replaceChildren(shareLinkBox(result));
+    shareArea.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  };
+
+  const draw = async () => {
+    let team;
+    try {
+      team = await teamApi();
+    } catch (err) {
+      list.replaceChildren(h('p', {}, `Couldn’t load the team: ${err.message}`));
+      return;
+    }
+    updateTeamBadge(team.requests.length);
+
+    const requests = team.requests.map(request => h('li', { class: 'member-row' },
+      h('span', { class: 'profile-avatar', 'aria-hidden': 'true' }, initials(request.name)),
+      h('div', { class: 'member-info' },
+        h('div', { class: 'member-name' }, request.name),
+        h('div', { class: 'member-meta' }, `${request.note ? `“${request.note}” · ` : ''}asked ${relativeTime(request.requestedAt)}`)),
+      h('div', { class: 'member-actions' },
+        h('button', { type: 'button', class: 'button small primary', onClick: event => act({ action: 'approve', userId: request.id }, event.currentTarget) }, 'Approve'),
+        h('button', {
+          type: 'button', class: 'button small danger',
+          onClick: event => {
+            if (confirm(`Reject ${request.name}’s request?`)) act({ action: 'reject', userId: request.id }, event.currentTarget);
+          }
+        }, 'Reject'))));
+
+    const members = team.members.map(member => {
+      const you = currentUser && member.id === currentUser.id;
+      const status = member.role === 'owner' && you ? 'Owner · you'
+        : !member.hasPin ? 'Hasn’t set a PIN yet'
+          : member.lastActiveAt ? `Active ${relativeTime(member.lastActiveAt)}` : 'Not opened yet';
+      return h('li', { class: 'member-row' },
+        h('span', { class: 'profile-avatar', 'aria-hidden': 'true' }, initials(member.name)),
+        h('div', { class: 'member-info' },
+          h('div', { class: 'member-name' }, member.name),
+          h('div', { class: 'member-meta' }, status, member.locked ? ' · locked after wrong PINs' : '')),
+        h('div', { class: 'member-actions' },
+          h('button', { type: 'button', class: 'button small', onClick: event => showLink(member, event.currentTarget) }, member.hasPin ? 'Reset PIN' : 'Invite link'),
+          h('button', {
+            type: 'button', class: 'button small',
+            onClick: event => {
+              const name = prompt(`Rename ${member.name} to:`, member.name);
+              if (name && name.trim() && name.trim() !== member.name) act({ action: 'rename', userId: member.id, name: name.trim() }, event.currentTarget);
+            }
+          }, 'Rename'),
+          member.role === 'owner' ? null : h('button', {
+            type: 'button', class: 'button small danger',
+            onClick: event => {
+              if (confirm(`Remove ${member.name}? Their board is deleted permanently and they’re signed out everywhere.`)) {
+                act({ action: 'remove', userId: member.id }, event.currentTarget);
+              }
+            }
+          }, 'Remove')));
+    });
+
+    setChildren(list,
+      team.requests.length ? h('h4', {}, `Waiting for approval · ${team.requests.length}`) : null,
+      team.requests.length ? h('ul', { class: 'member-list' }, requests) : null,
+      h('h4', {}, `Members · ${team.members.length}`),
+      h('ul', { class: 'member-list' }, members)
+    );
+  };
+
+  openPanel(
+    sheetHead('Team'),
+    h('p', {}, 'Everyone gets their own private board. Here you see who’s on the team and when they were last active, never their tasks.'),
+    h('div', { class: 'sheet-section' },
+      h('h4', {}, 'Add member'),
+      h('div', { class: 'sheet-actions add-member-row' }, nameInput, addButton),
+      shareArea),
+    list
+  );
+  draw();
+  if (focusAdd) nameInput.focus();
+}
+
+// ---------------------------------------------------------------------------
 // Install as an app
 // ---------------------------------------------------------------------------
 
@@ -904,6 +1099,9 @@ function openMoreMenu(anchor) {
 
   openPopover(anchor, h('div', {},
     currentUser ? h('div', { class: 'menu-label' }, `Signed in as ${currentUser.name}`) : null,
+    isOwner() ? menuItem(teamPending ? `Team · ${teamPending} waiting` : 'Team', () => openTeamPanel(), { icon: '◍', hint: teamPending ? '●' : null }) : null,
+    isOwner() ? menuItem('Add member', () => openTeamPanel({ focusAdd: true }), { icon: '+' }) : null,
+    isOwner() ? h('div', { class: 'menu-sep' }) : null,
     isInstalledApp() ? null : menuItem('Install app on this device', installApp, { icon: '⇩' }),
     menuItem('Weekly report', openReportPanel, { icon: '▤' }),
     menuItem(`Archive done tasks (${doneCount})`, () => archiveDone(), { icon: '⤓', disabled: !doneCount }),
@@ -917,6 +1115,7 @@ function openMoreMenu(anchor) {
     menuItem('Backup & restore', openBackupPanel, { icon: '⇅' }),
     menuItem('Sync status', openSyncPanel, { icon: '⟳' }),
     touchQuery.matches ? null : menuItem('Keyboard shortcuts', openShortcutsPanel, { icon: '⌘', hint: '?' }),
+    menuItem('Switch profile', switchProfile, { icon: '⇄' }),
     menuItem('Sign out of this device', lockBoard, { icon: '🔒' })
   ));
 }

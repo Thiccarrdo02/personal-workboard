@@ -99,10 +99,30 @@ function persistData() {
   if (currentUser) writeJSON(boardKey(currentUser.id), data);
 }
 
+// A new person's first board: an Inbox with one short "how to use it" task.
+// Stamped at time 0, so any board already in the cloud always wins over it.
 function starterData() {
+  const welcome = Core.makeTask({
+    text: 'Welcome to your Workboard 👋 Tap me for a quick tour',
+    notes: [
+      'This board is private: only you can see it.',
+      '',
+      '• Add a task: tap + (or press N on a computer) and type something like “Call client fri 5pm !”. The date, time and ! (urgent) are picked up automatically.',
+      '• Move a task along: tap its status button To start → In progress → Done. Long-press it for “Waiting” when you’re blocked on someone.',
+      '• Make a category for each client or project with “+ New category”.',
+      '• Put Workboard on your home screen: More (⋯) → Install app.',
+      '',
+      'Delete this task whenever you like.'
+    ].join('\n'),
+    checklist: [
+      { id: 'welcome-1', text: 'Add your first task', done: false },
+      { id: 'welcome-2', text: 'Create a category for a client', done: false },
+      { id: 'welcome-3', text: 'Install the app on your phone', done: false }
+    ]
+  }, 0);
   return Core.normalizeData({
     version: Core.SCHEMA,
-    categories: [{ id: 'inbox', name: 'Inbox', color: 'ink', order: 0, updatedAt: 0, tasks: [] }]
+    categories: [{ id: 'inbox', name: 'Inbox', color: 'ink', order: 0, updatedAt: 0, tasks: [{ ...welcome, id: 'welcome' }] }]
   });
 }
 
@@ -125,6 +145,19 @@ function activateUser(user, token) {
   sync.editSeq = 0;
   sync.conflicts = 0;
   setSyncStatus('idle');
+}
+
+// Steps away from the board without signing out (switch profile): this
+// device keeps the session and local copy, so picking the name again opens it.
+function parkUser() {
+  if (!currentUser) return;
+  currentUser = null;
+  authToken = '';
+  localStorage.removeItem(CURRENT_USER_KEY);
+  data = starterData();
+  undoStack.length = 0;
+  clearTimeout(sync.pushTimer);
+  clearTimeout(sync.retryTimer);
 }
 
 // Signs this device out. The local copy is removed so the next person on a
@@ -507,12 +540,28 @@ function markSynced() {
 }
 
 // The server no longer accepts this device's session (expired, PIN reset, removed).
-// The local copy is kept so unsynced edits upload after signing in again.
-function handleUnauthorized() {
-  if (currentUser) forgetSession(currentUser.id);
+// Normally the local copy is kept so unsynced edits upload after signing in
+// again; if the person was removed from the team, it's wiped instead.
+async function handleUnauthorized() {
+  const user = currentUser;
+  if (!user) return;
+  forgetSession(user.id);
   authToken = '';
   setSyncStatus('error', 'Signed out');
-  showLockScreen('You were signed out. Please enter your PIN again.', currentUser);
+  let removed = false;
+  try {
+    const res = await fetch('/api/profiles', { cache: 'no-store' });
+    const body = await res.json();
+    removed = Array.isArray(body.profiles) && !body.profiles.some(profile => profile.id === user.id);
+  } catch (e) {}
+  if (removed && currentUser && currentUser.id === user.id) {
+    deactivateUser();
+    applyIdentity();
+    renderNow();
+    showLockScreen('You’re no longer on this team, so your board was removed from this device.');
+    return;
+  }
+  showLockScreen('You were signed out. Please enter your PIN again.', user);
 }
 
 // True while the request started for `userId` still belongs to the person on screen.
@@ -559,6 +608,7 @@ async function pullRemote({ manual = false } = {}) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const body = await res.json();
     if (!stillActive(userId)) return;
+    if (typeof body.teamPending === 'number') updateTeamBadge(body.teamPending);
 
     if (!body.found) {
       // Empty cloud: upload this board.

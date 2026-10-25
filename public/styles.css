@@ -1553,6 +1553,89 @@ main.app[inert] ~ .bottom-nav { visibility: hidden; }
   40%, 80% { transform: translateX(10px); }
 }
 
+/* ---------- Request access (sign-in screen) ---------- */
+
+.lock-form { width: 100%; display: grid; gap: 10px; margin-top: 4px; }
+.lock-input {
+  width: 100%;
+  height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 650;
+  outline: none;
+}
+.lock-input:focus { border-color: var(--ink); box-shadow: var(--focus); }
+.lock-submit { width: 100%; height: 48px; font-size: 15px; }
+.lock-form .lock-link { margin-top: 0; }
+.lock-inline-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 800;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+/* ---------- Team panel ---------- */
+
+a.button { text-decoration: none; }
+.member-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.member-row {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 4px 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+.member-row .profile-avatar { width: 40px; height: 40px; border-radius: 12px; font-size: 14px; grid-row: span 2; align-self: start; }
+.member-name { font-size: 14.5px; font-weight: 780; overflow-wrap: anywhere; }
+.member-meta { font-size: 12px; font-weight: 650; color: var(--muted); }
+.member-actions { grid-column: 2; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.add-member-row input { flex: 1 1 200px; }
+.share-box {
+  display: grid;
+  gap: 10px;
+  margin-top: 4px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+.share-box p { color: var(--ink-2); }
+.share-box input[type="text"] { width: 100%; font-size: 13px !important; color: var(--muted); }
+
+/* Badge: someone is waiting to join (owner only) */
+#moreButton, #navMore { position: relative; }
+#moreButton.has-badge::after,
+#navMore.has-badge::after {
+  content: attr(data-badge);
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--urgent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 19px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--bg);
+}
+#navMore.has-badge::after { top: 2px; right: calc(50% - 22px); }
+
 /* ==========================================================================
    Responsive
    ========================================================================== */

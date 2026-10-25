@@ -68,7 +68,7 @@ export function isWeakPin(pin) {
 }
 
 // Messages tell people who to ask (the owner's name, e.g. "Ask Raza …").
-async function ownerName(env) {
+export async function ownerName(env) {
   const row = await env.DB.prepare("SELECT name FROM users WHERE role = 'owner' AND status = 'active' ORDER BY created_at LIMIT 1").first();
   return row ? row.name.split(/\s+/)[0] : 'your admin';
 }

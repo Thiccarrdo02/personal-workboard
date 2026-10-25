@@ -21,13 +21,39 @@ const pinDeleteBtn = document.getElementById('pinDeleteBtn');
 const rememberDevice = document.getElementById('rememberDevice');
 const lockBack = document.getElementById('lockBack');
 const lockNote = document.getElementById('lockNote');
+const lockForm = document.getElementById('lockForm');
 const boardTitle = document.getElementById('boardTitle');
+const PENDING_KEY = 'workboard:pending';
+const REQUEST_POLL_MS = 15000;
 
 let enteredPin = '';
 let isVerifying = false;
 let profiles = [];
-// { kind: 'loading' } | { kind: 'profiles' } | { kind: 'pin', user } | { kind: 'setup', token, user, purpose, firstPin }
+let requestPoll = null;
+// { kind: 'loading' } | { kind: 'profiles' } | { kind: 'pin', user }
+// | { kind: 'setup', token, user, purpose, firstPin }
+// | { kind: 'request', name, note, error } | { kind: 'request-pin', name, note, firstPin }
+// | { kind: 'waiting', pending }
 let lockMode = { kind: 'loading' };
+
+// A request waiting for approval on this device: { token, user, owner, remember }.
+function readPending() {
+  try {
+    return JSON.parse(localStorage.getItem(PENDING_KEY) || 'null');
+  } catch (e) {
+    return null;
+  }
+}
+
+function savePending(pending) {
+  localStorage.setItem(PENDING_KEY, JSON.stringify(pending));
+}
+
+function clearPending() {
+  localStorage.removeItem(PENDING_KEY);
+  clearInterval(requestPoll);
+  requestPoll = null;
+}
 
 function initials(name) {
   return String(name || '').split(/\s+/).filter(Boolean).slice(0, 2).map(word => word[0].toUpperCase()).join('') || '?';
@@ -81,16 +107,20 @@ function applyIdentity() {
   const name = currentUser ? firstName(currentUser.name) : '';
   boardTitle.textContent = name ? `${name}’s Workboard` : 'Workboard';
   document.title = name ? `${name}’s Workboard · ZAWISH` : 'ZAWISH Workboard';
+  resetTeamBadge();
 }
 
 function renderLock() {
   const { kind } = lockMode;
+  const usesPin = kind === 'pin' || kind === 'setup' || kind === 'request-pin';
   profileList.hidden = kind !== 'profiles';
-  pinEntry.hidden = kind !== 'pin' && kind !== 'setup';
-  lockBack.hidden = kind !== 'pin';
+  pinEntry.hidden = !usesPin;
+  lockForm.hidden = kind !== 'request' && kind !== 'waiting';
+  lockBack.hidden = !(kind === 'pin' || kind === 'request' || kind === 'request-pin');
+  lockBack.textContent = kind === 'pin' ? '← Choose another profile' : '← Back';
   lockNote.hidden = kind !== 'profiles';
-  lockAvatar.classList.toggle('initials', kind === 'pin' || kind === 'setup');
-  if (kind === 'loading' || kind === 'profiles') {
+  lockAvatar.classList.toggle('initials', usesPin || kind === 'waiting');
+  if (kind === 'loading' || kind === 'profiles' || kind === 'request') {
     lockAvatar.replaceChildren(h('img', { src: 'icons/icon-192.png', alt: '' }));
   }
 
@@ -99,8 +129,12 @@ function renderLock() {
     lockDesc.textContent = '';
   } else if (kind === 'profiles') {
     lockTitle.textContent = 'Who’s working?';
-    lockNote.textContent = `Not on the list? Ask ${ownerName()} for an invite link.`;
     lockDesc.textContent = profiles.length ? 'Tap your name to open your board.' : 'No profiles yet.';
+    lockNote.replaceChildren(
+      'Not on the list? ',
+      h('button', { type: 'button', class: 'lock-inline-link', onClick: startRequest }, 'Request access'),
+      ` or ask ${ownerName()} for an invite link.`
+    );
     profileList.replaceChildren(...profiles.map(profile => h('button', {
       type: 'button',
       class: 'profile-button',
@@ -108,7 +142,37 @@ function renderLock() {
     },
     h('span', { class: 'profile-avatar', 'aria-hidden': 'true' }, initials(profile.name)),
     h('span', { class: 'profile-name' }, profile.name),
-    profile.hasPin ? null : h('span', { class: 'profile-note' }, 'Not set up yet'))));
+    getSession(profile.id) ? h('span', { class: 'profile-note' }, 'Signed in here')
+      : profile.hasPin ? null : h('span', { class: 'profile-note' }, 'Not set up yet'))));
+  } else if (kind === 'request') {
+    lockTitle.textContent = 'Request access';
+    lockDesc.textContent = `Tell ${ownerName()} who you are. Once approved, you get your own private board.`;
+    const nameInput = h('input', { type: 'text', class: 'lock-input', placeholder: 'Your full name', maxLength: 40, autocomplete: 'name', value: lockMode.name || '', 'aria-label': 'Your name' });
+    const noteInput = h('input', { type: 'text', class: 'lock-input', placeholder: 'What do you do here? (optional)', maxLength: 140, value: lockMode.note || '', 'aria-label': `A note for ${ownerName()}` });
+    const go = () => submitRequestDetails(nameInput.value, noteInput.value);
+    [nameInput, noteInput].forEach(input => input.addEventListener('keydown', event => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        go();
+      }
+    }));
+    lockForm.replaceChildren(nameInput, noteInput, h('button', { type: 'button', class: 'button primary lock-submit', onClick: go }, 'Continue'));
+    setTimeout(() => nameInput.focus(), 60);
+  } else if (kind === 'request-pin') {
+    lockAvatar.textContent = initials(lockMode.name);
+    lockTitle.textContent = lockMode.firstPin ? 'Confirm your PIN' : 'Choose your PIN';
+    lockDesc.textContent = lockMode.firstPin
+      ? 'Enter the same PIN again.'
+      : `Pick a ${PIN_LENGTH}-digit PIN. You’ll use it to open your board.`;
+  } else if (kind === 'waiting') {
+    const { pending } = lockMode;
+    lockAvatar.textContent = initials(pending.user.name);
+    lockTitle.textContent = 'Waiting for approval';
+    lockDesc.textContent = `Hi ${firstName(pending.user.name)}, your request was sent to ${pending.owner || ownerName()}. This page opens your board by itself once it’s approved, so you can close it and come back later.`;
+    lockForm.replaceChildren(
+      h('button', { type: 'button', class: 'button lock-submit', onClick: () => checkRequest(true) }, 'Check now'),
+      h('button', { type: 'button', class: 'lock-link', onClick: cancelRequest }, 'Cancel request')
+    );
   } else if (kind === 'pin') {
     lockAvatar.textContent = initials(lockMode.user.name);
     lockTitle.textContent = lockMode.user.name;
@@ -154,6 +218,12 @@ async function showProfiles(message = '') {
 }
 
 function selectProfile(profile, message = '') {
+  // Remembered on this device: open straight away, no PIN.
+  const remembered = getSession(profile.id);
+  if (remembered) {
+    enterRemembered(profile, remembered);
+    return;
+  }
   if (!profile.hasPin) {
     setLockError(`${profile.name} isn’t set up yet. Ask ${ownerName()} for a setup link.`);
     return;
@@ -212,6 +282,92 @@ async function lockBoard() {
   showLockScreen('Signed out on this device.');
 }
 
+async function enterRemembered(profile, session) {
+  activateUser({ id: profile.id, name: profile.name, role: profile.role }, session.token);
+  applyIdentity();
+  hideLockScreen();
+  renderNow();
+  await pullRemote({ manual: true });
+}
+
+// Back to "Who's working?" without signing out: this device keeps remembering you.
+async function switchProfile() {
+  if (currentUser && syncMeta.dirty) await pushRemote();
+  parkUser();
+  applyIdentity();
+  renderNow();
+  showLockScreen();
+}
+
+// ---------------------------------------------------------------------------
+// Request access: name → PIN → wait for the owner's approval
+// ---------------------------------------------------------------------------
+
+function startRequest() {
+  const pending = readPending();
+  if (pending) {
+    showWaiting(pending);
+    return;
+  }
+  lockMode = { kind: 'request', name: '', note: '' };
+  renderLock();
+  setLockError('');
+}
+
+function submitRequestDetails(name, note) {
+  const clean = String(name || '').replace(/\s+/g, ' ').trim();
+  if (clean.length < 2) {
+    setLockError('Please enter your name.');
+    return;
+  }
+  if (profiles.some(profile => profile.name.toLowerCase() === clean.toLowerCase())) {
+    setLockError(`“${clean}” is already on the list. Tap your name there, or add a surname.`);
+    return;
+  }
+  lockMode = { kind: 'request-pin', name: clean, note: String(note || '').trim(), firstPin: null };
+  resetPin();
+  renderLock();
+  setLockError('');
+  focusPin();
+}
+
+function showWaiting(pending) {
+  openLock();
+  lockMode = { kind: 'waiting', pending };
+  renderLock();
+  setLockError('');
+  clearInterval(requestPoll);
+  requestPoll = setInterval(() => {
+    if (!document.hidden) checkRequest(false);
+  }, REQUEST_POLL_MS);
+}
+
+async function checkRequest(manual) {
+  const pending = readPending();
+  if (!pending) return;
+  try {
+    const res = await fetch('/api/request', { headers: { Authorization: `Bearer ${pending.token}` }, cache: 'no-store' });
+    const body = await res.json();
+    if (body.status === 'approved') {
+      clearPending();
+      await signedIn(body.user, pending.token, pending.remember !== false);
+      showToast(`Welcome, ${firstName(body.user.name)}! Your board is ready.`);
+    } else if (body.status === 'rejected') {
+      clearPending();
+      showProfiles(`Your request wasn’t approved. Message ${ownerName()} if you think that’s a mistake.`);
+    } else if (manual) {
+      setLockError('Still waiting. You’ll get in automatically once it’s approved.');
+    }
+  } catch (err) {
+    if (manual) setLockError('Can’t reach the server. Check your connection.');
+  }
+}
+
+function cancelRequest() {
+  clearPending();
+  showProfiles('Request cancelled on this device.');
+}
+
 function updatePinDots() {
   pinDots.forEach((dot, idx) => dot.classList.toggle('filled', idx < enteredPin.length));
 }
@@ -235,8 +391,10 @@ function handlePinDelete() {
 async function submitPin() {
   if (isVerifying) return;
   const pin = enteredPin;
+  // Setup links and access requests choose a new PIN: type it, then confirm it.
+  const choosing = lockMode.kind === 'setup' || lockMode.kind === 'request-pin';
 
-  if (lockMode.kind === 'setup' && !lockMode.firstPin) {
+  if (choosing && !lockMode.firstPin) {
     if (isWeakPin(pin)) {
       showPinError('That PIN is too easy to guess. Avoid repeats and runs like 123456.');
       return;
@@ -247,7 +405,7 @@ async function submitPin() {
     setLockError('');
     return;
   }
-  if (lockMode.kind === 'setup' && lockMode.firstPin !== pin) {
+  if (choosing && lockMode.firstPin !== pin) {
     lockMode.firstPin = null;
     renderLock();
     showPinError('Those PINs didn’t match. Choose your PIN again.');
@@ -258,6 +416,22 @@ async function submitPin() {
   setLockError('');
   try {
     const remember = rememberDevice.checked;
+
+    if (lockMode.kind === 'request-pin') {
+      const { name, note } = lockMode;
+      const res = await postJson('/api/request', { name, note, pin, remember });
+      if (res.ok && res.body.token) {
+        const pending = { token: res.body.token, user: res.body.user, owner: res.body.owner, remember };
+        savePending(pending);
+        showWaiting(pending);
+      } else {
+        lockMode = { kind: 'request', name, note };
+        renderLock();
+        setLockError(res.body.error || 'Something went wrong. Please try again.');
+      }
+      return;
+    }
+
     const res = lockMode.kind === 'setup'
       ? await postJson('/api/setup', { action: 'complete', token: lockMode.token, pin, remember })
       : await postJson('/api/login', { userId: lockMode.user.id, pin, remember });
@@ -400,6 +574,8 @@ function deleteFocusedTask(row) {
 
 document.addEventListener('keydown', event => {
   if (isLocked()) {
+    // Typing in the request form (name, note) is normal text, not PIN digits.
+    if (event.target.closest && event.target.closest('.lock-form')) return;
     if (/^[0-9]$/.test(event.key)) {
       event.preventDefault();
       handlePinDigit(event.key);
@@ -554,6 +730,7 @@ startSyncLoops();
 const setupToken = readSetupToken();
 const rememberedId = lastUserId();
 const remembered = rememberedId && getSession(rememberedId);
+const waitingRequest = readPending();
 if (setupToken) {
   startSetup(setupToken);
 } else if (remembered) {
@@ -561,6 +738,12 @@ if (setupToken) {
   applyIdentity();
   renderNow();
   pullRemote({ manual: true });
+} else if (waitingRequest) {
+  // This device asked to join earlier: keep waiting (or get in if approved meanwhile).
+  loadProfiles().catch(() => {}).finally(() => {
+    showWaiting(waitingRequest);
+    checkRequest(false);
+  });
 } else {
   showLockScreen();
 }
