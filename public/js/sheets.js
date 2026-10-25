@@ -1,4 +1,4 @@
-/* My Workboard — sheets: task details, quick add, and panels (archive, report, digest, backup, sync, shortcuts). */
+/* ZAWISH Workboard — sheets: task details, quick add, and panels (archive, report, digest, backup, sync, shortcuts). */
 
 const detailsDialog = document.getElementById('detailsDialog');
 const panelDialog = document.getElementById('panelDialog');
@@ -738,7 +738,7 @@ function openBackupPanel() {
         onClick: () => {
           const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
           const url = URL.createObjectURL(blob);
-          const link = h('a', { href: url, download: `workboard-backup-${todayStr()}.json` });
+          const link = h('a', { href: url, download: `zawish-workboard-${(currentUser ? currentUser.name : 'board').toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${todayStr()}.json` });
           document.body.append(link);
           link.click();
           link.remove();
@@ -805,6 +805,85 @@ function openShortcutsPanel() {
 }
 
 // ---------------------------------------------------------------------------
+// Install as an app
+// ---------------------------------------------------------------------------
+
+// Chrome, Edge and Android offer a native install dialog; iPhone needs steps.
+let installPrompt = null;
+
+window.addEventListener('beforeinstallprompt', event => {
+  event.preventDefault();
+  installPrompt = event;
+});
+window.addEventListener('appinstalled', () => {
+  installPrompt = null;
+  showToast('Workboard installed on this device');
+});
+
+function isInstalledApp() {
+  return window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+}
+
+function devicePlatform() {
+  const ua = navigator.userAgent;
+  const ios = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (ios) return /CriOS|EdgiOS|FxiOS/.test(ua) ? 'ios-other' : 'ios-safari';
+  if (/Android/.test(ua)) return 'android';
+  return 'desktop';
+}
+
+async function installApp() {
+  const prompt = installPrompt;
+  if (prompt) {
+    installPrompt = null;
+    try {
+      await prompt.prompt();
+      await prompt.userChoice;
+      return;
+    } catch (err) {
+      // The browser refused the dialog; show the manual steps instead.
+    }
+  }
+  openInstallPanel();
+}
+
+function openInstallPanel() {
+  const steps = {
+    'ios-safari': ['iPhone / iPad (Safari)', [
+      'Tap the Share button: a square with an arrow pointing up. It’s in the bottom toolbar, or inside the ⋯ button next to the address bar on newer iPhones.',
+      'Scroll down and tap “Add to Home Screen”.',
+      'Tap “Add”. Workboard now opens like an app.'
+    ]],
+    'ios-other': ['iPhone / iPad (Chrome or Edge)', [
+      'Tap the Share button in the address bar (a square with an arrow pointing up).',
+      'Tap “Add to Home Screen”, then “Add”.',
+      'Don’t see it? Open board.zawish.si in Safari and follow the Safari steps.'
+    ]],
+    android: ['Android (Chrome)', [
+      'Tap ⋮ (three dots, top right).',
+      'Tap “Install app” or “Add to Home screen”.',
+      'Confirm with “Install”.'
+    ]],
+    desktop: ['Computer (Chrome or Edge)', [
+      'Chrome: click the install icon at the right end of the address bar (a screen with a down arrow), or ⋮ → Cast, save and share → Install page as app.',
+      'Edge: ⋯ → Apps → Install this site as an app.',
+      'Workboard then opens in its own window, from your Start menu or Dock.'
+    ]]
+  };
+  const mine = devicePlatform();
+  const order = [mine, ...Object.keys(steps).filter(key => key !== mine)];
+  openPanel(
+    sheetHead('Install Workboard'),
+    h('p', {}, isInstalledApp()
+      ? 'You’re already using the installed app on this device.'
+      : 'Put Workboard on your home screen so it opens full-screen like a normal app, even offline.'),
+    order.map((key, index) => h('details', { class: 'setup', open: index === 0 },
+      h('summary', {}, `${steps[key][0]}${key === mine ? ' · this device' : ''}`),
+      h('ol', {}, steps[key][1].map(text => h('li', {}, text)))))
+  );
+}
+
+// ---------------------------------------------------------------------------
 // More menu
 // ---------------------------------------------------------------------------
 
@@ -824,6 +903,8 @@ function openMoreMenu(anchor) {
   drawTheme();
 
   openPopover(anchor, h('div', {},
+    currentUser ? h('div', { class: 'menu-label' }, `Signed in as ${currentUser.name}`) : null,
+    isInstalledApp() ? null : menuItem('Install app on this device', installApp, { icon: '⇩' }),
     menuItem('Weekly report', openReportPanel, { icon: '▤' }),
     menuItem(`Archive done tasks (${doneCount})`, () => archiveDone(), { icon: '⤓', disabled: !doneCount }),
     menuItem(`Archived tasks (${archivedCount})`, openArchivePanel, { icon: '▣' }),

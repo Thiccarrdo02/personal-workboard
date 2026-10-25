@@ -1,4 +1,4 @@
-/* My Workboard — rendering: summary, Today strip, board / kanban / focus views, menus and toasts. */
+/* ZAWISH Workboard — rendering: summary, Today strip, board / kanban / focus views, menus and toasts. */
 
 const viewEl = document.getElementById('view');
 const summaryEl = document.getElementById('summary');

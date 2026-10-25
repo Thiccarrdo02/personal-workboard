@@ -67,6 +67,12 @@ export function isWeakPin(pin) {
   return steps.size === 1 && (steps.has(1) || steps.has(-1));
 }
 
+// Messages tell people who to ask (the owner's name, e.g. "Ask Raza …").
+async function ownerName(env) {
+  const row = await env.DB.prepare("SELECT name FROM users WHERE role = 'owner' AND status = 'active' ORDER BY created_at LIMIT 1").first();
+  return row ? row.name.split(/\s+/)[0] : 'your admin';
+}
+
 export function publicUser(user) {
   return { id: user.id, name: user.name, role: user.role };
 }
@@ -152,7 +158,7 @@ export async function login(env, request, body, now) {
   await limitNetwork(env, request, now);
   const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(String(body.userId || '')).first();
   if (!user || user.status !== 'active') throw new HttpError(401, 'That profile is not available.');
-  if (!user.pin_hash) throw new HttpError(409, 'This profile has no PIN yet. Ask Raza for your setup link.');
+  if (!user.pin_hash) throw new HttpError(409, `This profile has no PIN yet. Ask ${await ownerName(env)} for your setup link.`);
   if (user.locked_until > now) {
     throw new HttpError(429, `Too many wrong PINs. Try again in ${minutes(user.locked_until - now)}.`, { lockedUntil: user.locked_until });
   }
@@ -197,14 +203,14 @@ async function findLink(env, token, now) {
 export async function checkSetupLink(env, request, body, now) {
   await limitNetwork(env, request, now);
   const link = await findLink(env, body.token, now);
-  if (!link) throw new HttpError(404, 'This link is invalid, already used or expired. Ask Raza for a new one.');
+  if (!link) throw new HttpError(404, `This link is invalid, already used or expired. Ask ${await ownerName(env)} for a new one.`);
   return { ok: true, purpose: link.purpose, user: { id: link.user_id, name: link.name, role: link.role } };
 }
 
 export async function completeSetup(env, request, body, now) {
   await limitNetwork(env, request, now);
   const link = await findLink(env, body.token, now);
-  if (!link) throw new HttpError(404, 'This link is invalid, already used or expired. Ask Raza for a new one.');
+  if (!link) throw new HttpError(404, `This link is invalid, already used or expired. Ask ${await ownerName(env)} for a new one.`);
   const pin = String(body.pin || '');
   if (!isValidPin(pin)) throw new HttpError(400, `Your PIN must be exactly ${PIN_LENGTH} digits.`);
   if (isWeakPin(pin)) throw new HttpError(400, 'That PIN is too easy to guess. Avoid repeats and runs like 123456.');

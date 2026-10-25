@@ -313,6 +313,7 @@ test('buildDigest', () => {
   assert.match(digest.text, /Waiting on others \(1\)\n• Client review — Studio \(3d\)/);
   assert.equal(digest.isEmpty, false);
   assert.equal(Core.buildDigest(Core.emptyData(), { today: TODAY }).isEmpty, true);
+  assert.match(Core.buildDigest(Core.emptyData(), { today: TODAY, name: 'Raza Ahmed' }).text, /^☀️ Good morning, Raza! Wed 21 Oct/);
 });
 
 test('buildReport', () => {

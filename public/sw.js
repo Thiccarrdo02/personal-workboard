@@ -1,4 +1,4 @@
-/* My Workboard service worker: lets the installed app open offline.
+/* ZAWISH Workboard service worker: lets the installed app open offline.
    Network-first for the app shell (so new deploys show up immediately),
    falling back to the cached copy when there is no connection. API calls
    are never cached. Bump CACHE_VERSION when the shell file list changes. */

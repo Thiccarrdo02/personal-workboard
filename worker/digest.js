@@ -15,7 +15,7 @@ function config(env) {
     telegramChatId: env.TELEGRAM_CHAT_ID || '',
     resendKey: env.RESEND_API_KEY || '',
     emailTo: env.DIGEST_EMAIL_TO || '',
-    emailFrom: env.DIGEST_EMAIL_FROM || 'Workboard <onboarding@resend.dev>',
+    emailFrom: env.DIGEST_EMAIL_FROM || 'ZAWISH Workboard <onboarding@resend.dev>',
     fallbackTimezone: env.DIGEST_TIMEZONE || 'UTC'
   };
 }
@@ -54,11 +54,11 @@ async function telegramChats(cfg) {
 
 async function sendDigestFor(env, userId, now) {
   const cfg = config(env);
-  const row = await env.DB.prepare('SELECT data FROM boards WHERE user_id = ?').bind(userId).first();
-  const data = Core.normalizeData(row ? JSON.parse(row.data) : null);
+  const row = await env.DB.prepare('SELECT u.name, b.data FROM users u LEFT JOIN boards b ON b.user_id = u.id WHERE u.id = ?').bind(userId).first();
+  const data = Core.normalizeData(row && row.data ? JSON.parse(row.data) : null);
   const timezone = data.settings.timezone || cfg.fallbackTimezone;
   const today = Core.dayInTimeZone(new Date(now), timezone);
-  const digest = Core.buildDigest(data, { today, now });
+  const digest = Core.buildDigest(data, { today, now, name: row ? row.name : '' });
 
   const sent = [];
   const errors = [];
@@ -67,7 +67,7 @@ async function sendDigestFor(env, userId, now) {
   }
   if (cfg.resendKey && cfg.emailTo) {
     try {
-      await sendEmail(cfg, `Workboard · ${Core.formatDay(today)} · ${digest.counts.overdue} overdue, ${digest.counts.today} due today`, digest.text);
+      await sendEmail(cfg, `ZAWISH Workboard · ${Core.formatDay(today)} · ${digest.counts.overdue} overdue, ${digest.counts.today} due today`, digest.text);
       sent.push('email');
     } catch (e) { errors.push(e.message); }
   }

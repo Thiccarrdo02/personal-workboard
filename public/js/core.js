@@ -1,5 +1,5 @@
 /*
- * My Workboard core: dates, quick-add parsing, recurrence, data normalisation,
+ * ZAWISH Workboard core: dates, quick-add parsing, recurrence, data normalisation,
  * sync merging and text reports. Pure functions only, shared by the browser
  * (window.WorkboardCore), the API (require) and the unit tests.
  */
@@ -869,7 +869,7 @@
   // Text reports
   // ---------------------------------------------------------------------------
 
-  function buildDigest(data, { today, now = Date.now() } = {}) {
+  function buildDigest(data, { today, now = Date.now(), name = '' } = {}) {
     const open = listTasks(data).filter(({ task }) => task.status !== 'DONE');
     const overdue = open.filter(x => x.task.due && x.task.due < today).sort(compareDue);
     const dueToday = open.filter(x => x.task.due === today).sort(compareDue);
@@ -879,7 +879,7 @@
     const inProgress = open.filter(x => x.task.status === 'WIP').length;
 
     const line = ({ task, category }, extra) => `• ${task.text} — ${category.name}${extra ? ` (${extra})` : ''}`;
-    const lines = [`☀️ Good morning! ${formatDay(today)}`];
+    const lines = [`☀️ Good morning${name ? `, ${name.split(/\s+/)[0]}` : ''}! ${formatDay(today)}`];
     const section = (title, items, format) => {
       if (!items.length) return;
       lines.push('', `${title} (${items.length})`);

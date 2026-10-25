@@ -1,4 +1,4 @@
-/* My Workboard — state, persistence, undo, actions and cloud sync. */
+/* ZAWISH Workboard — state, persistence, undo, actions and cloud sync. */
 
 const Core = window.WorkboardCore;
 

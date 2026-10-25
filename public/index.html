@@ -9,13 +9,13 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="Workboard" />
-  <meta name="description" content="Personal task manager for PC, laptop and phone" />
+  <meta name="description" content="ZAWISH Workboard: private task boards for the ZAWISH team" />
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="stylesheet" href="styles.css" />
-  <title>My Workboard</title>
+  <title>ZAWISH Workboard</title>
   <script src="js/theme.js"></script>
   <script src="js/core.js" defer></script>
   <script src="js/store.js" defer></script>
@@ -26,11 +26,13 @@
 <body>
   <div id="lockScreen" class="lock-screen hidden" aria-modal="true" role="dialog" aria-label="Sign in">
     <div class="lock-card" id="lockCard">
-      <div class="lock-icon-wrap" id="lockAvatar" aria-hidden="true">🔒</div>
+      <p class="lock-brand">ZAWISH <span>Workboard</span></p>
+      <div class="lock-icon-wrap" id="lockAvatar" aria-hidden="true"></div>
       <h2 class="lock-title" id="lockTitle">One moment…</h2>
       <p class="lock-desc" id="lockDesc"></p>
 
       <div class="profile-list" id="profileList" hidden></div>
+      <p class="lock-note" id="lockNote" hidden></p>
 
       <div class="pin-entry" id="pinEntry" hidden>
         <input id="pinHiddenInput" class="pin-hidden-input" type="password" inputmode="numeric" maxlength="6" autocomplete="off" aria-label="PIN" />
@@ -73,9 +75,9 @@
   <main class="app" id="appMain">
     <header class="topbar">
       <div class="brand">
-        <p class="eyebrow">Personal task manager</p>
-        <h1>My Workboard</h1>
-        <p class="subtitle">Everything stays on one screen. Press <kbd>N</kbd> to add a task with a date, <kbd>?</kbd> for shortcuts.</p>
+        <p class="eyebrow">ZAWISH Workboard</p>
+        <h1 id="boardTitle">Workboard</h1>
+        <p class="subtitle">Your private board: only you can see it. Press <kbd>N</kbd> to add a task with a date, <kbd>?</kbd> for shortcuts.</p>
       </div>
       <div class="topbar-actions">
         <button id="syncButton" class="button sync-badge" type="button" data-status="idle" title="Cloud sync status">

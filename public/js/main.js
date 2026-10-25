@@ -1,4 +1,4 @@
-/* My Workboard — sign-in, keyboard shortcuts, toolbar wiring and startup. */
+/* ZAWISH Workboard — sign-in, keyboard shortcuts, toolbar wiring and startup. */
 
 // ---------------------------------------------------------------------------
 // Sign-in screen: pick your profile, enter your 6-digit PIN once per device.
@@ -20,6 +20,8 @@ const pinHiddenInput = document.getElementById('pinHiddenInput');
 const pinDeleteBtn = document.getElementById('pinDeleteBtn');
 const rememberDevice = document.getElementById('rememberDevice');
 const lockBack = document.getElementById('lockBack');
+const lockNote = document.getElementById('lockNote');
+const boardTitle = document.getElementById('boardTitle');
 
 let enteredPin = '';
 let isVerifying = false;
@@ -64,20 +66,40 @@ function focusPin() {
   if (!pinEntry.hidden && !touchQuery.matches) setTimeout(() => pinHiddenInput.focus(), 80);
 }
 
+function firstName(name) {
+  return String(name || '').trim().split(/\s+/)[0] || '';
+}
+
+// The owner's first name, for "Ask Raza …" messages.
+function ownerName() {
+  const owner = profiles.find(profile => profile.role === 'owner');
+  return owner ? firstName(owner.name) : 'your admin';
+}
+
+// Board heading and browser tab follow whoever is signed in ("Raza’s Workboard").
+function applyIdentity() {
+  const name = currentUser ? firstName(currentUser.name) : '';
+  boardTitle.textContent = name ? `${name}’s Workboard` : 'Workboard';
+  document.title = name ? `${name}’s Workboard · ZAWISH` : 'ZAWISH Workboard';
+}
+
 function renderLock() {
   const { kind } = lockMode;
   profileList.hidden = kind !== 'profiles';
   pinEntry.hidden = kind !== 'pin' && kind !== 'setup';
-  lockBack.hidden = !(kind === 'pin' && profiles.length > 1);
+  lockBack.hidden = kind !== 'pin';
+  lockNote.hidden = kind !== 'profiles';
   lockAvatar.classList.toggle('initials', kind === 'pin' || kind === 'setup');
+  if (kind === 'loading' || kind === 'profiles') {
+    lockAvatar.replaceChildren(h('img', { src: 'icons/icon-192.png', alt: '' }));
+  }
 
   if (kind === 'loading') {
-    lockAvatar.textContent = '🔒';
     lockTitle.textContent = 'One moment…';
     lockDesc.textContent = '';
   } else if (kind === 'profiles') {
-    lockAvatar.textContent = '🔒';
     lockTitle.textContent = 'Who’s working?';
+    lockNote.textContent = `Not on the list? Ask ${ownerName()} for an invite link.`;
     lockDesc.textContent = profiles.length ? 'Tap your name to open your board.' : 'No profiles yet.';
     profileList.replaceChildren(...profiles.map(profile => h('button', {
       type: 'button',
@@ -125,11 +147,7 @@ async function showProfiles(message = '') {
     setLockError('Can’t reach the server. Check your connection and reload.');
     return;
   }
-  // With a single profile there is nothing to pick.
-  if (profiles.length === 1 && profiles[0].hasPin) {
-    selectProfile(profiles[0], message);
-    return;
-  }
+  // Always show the list, even with one profile, so a newcomer never lands on someone else's PIN pad.
   lockMode = { kind: 'profiles' };
   renderLock();
   setLockError(message);
@@ -137,7 +155,7 @@ async function showProfiles(message = '') {
 
 function selectProfile(profile, message = '') {
   if (!profile.hasPin) {
-    setLockError(`${profile.name} isn’t set up yet. Ask Raza for a setup link.`);
+    setLockError(`${profile.name} isn’t set up yet. Ask ${ownerName()} for a setup link.`);
     return;
   }
   lockMode = { kind: 'pin', user: profile };
@@ -172,6 +190,7 @@ function isLocked() {
 async function signedIn(user, token, remember) {
   saveSession(user, token, remember);
   activateUser(user, token);
+  applyIdentity();
   hideLockScreen();
   renderNow();
   await pullRemote({ manual: true });
@@ -188,6 +207,7 @@ async function lockBoard() {
   if (syncMeta.dirty && !confirm('Some changes haven’t uploaded yet (are you offline?). Sign out anyway and lose them on this device?')) return;
   postJson('/api/logout', {}, authToken).catch(() => {});
   deactivateUser();
+  applyIdentity();
   renderNow();
   showLockScreen('Signed out on this device.');
 }
@@ -538,6 +558,7 @@ if (setupToken) {
   startSetup(setupToken);
 } else if (remembered) {
   activateUser({ id: rememberedId, name: remembered.name, role: remembered.role }, remembered.token);
+  applyIdentity();
   renderNow();
   pullRemote({ manual: true });
 } else {
