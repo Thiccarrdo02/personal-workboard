@@ -39,7 +39,7 @@ async function hmacHex(secret, message) {
   return toHex(await crypto.subtle.sign('HMAC', key, encoder.encode(message)));
 }
 
-function timingSafeEqual(a, b) {
+export function timingSafeEqual(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
@@ -155,15 +155,25 @@ export async function listProfiles(env) {
 }
 
 export async function login(env, request, body, now) {
+  const user = await verifyPin(env, request, body.userId, body.pin, now);
+  const session = await createSession(env, user.id, { remember: body.remember !== false, device: request.headers.get('User-Agent') || '' }, now);
+  return { ok: true, token: session.token, expiresAt: session.expiresAt, user: publicUser(user) };
+}
+
+/**
+ * Checks someone's PIN with the usual protection (network limit, lockouts).
+ * Returns their user row, or throws an HttpError with a friendly message.
+ */
+export async function verifyPin(env, request, userId, rawPin, now) {
   await limitNetwork(env, request, now);
-  const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(String(body.userId || '')).first();
+  const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(String(userId || '')).first();
   if (!user || user.status !== 'active') throw new HttpError(401, 'That profile is not available.');
   if (!user.pin_hash) throw new HttpError(409, `This profile has no PIN yet. Ask ${await ownerName(env)} for your setup link.`);
   if (user.locked_until > now) {
     throw new HttpError(429, `Too many wrong PINs. Try again in ${minutes(user.locked_until - now)}.`, { lockedUntil: user.locked_until });
   }
 
-  const pin = String(body.pin || '');
+  const pin = String(rawPin || '');
   const ok = isValidPin(pin) && timingSafeEqual(await hashPin(env, pin, user.pin_salt), user.pin_hash);
   if (!ok) {
     const failed = user.failed_attempts + 1;
@@ -180,8 +190,7 @@ export async function login(env, request, body, now) {
 
   await env.DB.prepare('UPDATE users SET failed_attempts = 0, lockouts = 0, locked_until = 0, last_active_at = ? WHERE id = ?')
     .bind(now, user.id).run();
-  const session = await createSession(env, user.id, { remember: body.remember !== false, device: request.headers.get('User-Agent') || '' }, now);
-  return { ok: true, token: session.token, expiresAt: session.expiresAt, user: publicUser(user) };
+  return user;
 }
 
 // ---------------------------------------------------------------------------
@@ -227,5 +236,5 @@ export async function completeSetup(env, request, body, now) {
   await env.DB.batch(statements);
 
   const session = await createSession(env, link.user_id, { remember: body.remember !== false, device: request.headers.get('User-Agent') || '' }, now);
-  return { ok: true, token: session.token, expiresAt: session.expiresAt, user: { id: link.user_id, name: link.name, role: link.role } };
+  return { ok: true, purpose: link.purpose, token: session.token, expiresAt: session.expiresAt, user: { id: link.user_id, name: link.name, role: link.role } };
 }

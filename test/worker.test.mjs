@@ -178,17 +178,18 @@ test('isolation: nobody can read or overwrite another person’s board', async (
   assert.equal((await t.call('GET', '/api/sync', { token: raza })).body.data.categories[0].tasks[0].text, 'Raza private task');
 });
 
-test('digest: status for everyone, sending is owner-only for now', async () => {
+test('notifications: needs sign-in; without a bot nothing can be linked', async () => {
   const t = setup();
-  const raza = await t.onboard('u-raza', 'Raza', '480271', 'owner');
   const ali = await t.onboard('u-ali', 'Ali', '615283');
-  assert.equal((await t.call('GET', '/api/digest?action=status')).status, 401);
-  assert.deepEqual((await t.call('GET', '/api/digest?action=status', { token: ali })).body.channels, { telegram: false, email: false });
-  assert.equal((await t.call('POST', '/api/digest', { token: ali, body: { action: 'send' } })).status, 403);
-  const res = await t.call('POST', '/api/digest', { token: raza, body: { action: 'send' } });
-  assert.equal(res.body.ok, false);
-  assert.match(res.body.errors[0], /No delivery channel/);
-  assert.match(res.body.preview, /Good morning/);
+  await t.onboard('u-raza', 'Raza', '480271', 'owner');
+  assert.equal((await t.call('GET', '/api/notifications')).status, 401);
+  const res = await t.call('GET', '/api/notifications', { token: ali });
+  assert.equal(res.body.botReady, false);
+  assert.deepEqual(res.body.settings, { enabled: true, time: '08:00', days: 'mon-sat', mode: 'full', skipEmpty: false, timezone: '' });
+  const link = await t.call('POST', '/api/notifications', { token: ali, body: { action: 'link' } });
+  assert.equal(link.status, 503);
+  assert.match(link.body.error, /Ask Raza/);
+  assert.equal((await t.call('POST', '/api/notifications', { token: ali, body: { action: 'activate' } })).status, 403, 'only the owner activates');
 });
 
 test('unknown routes and errors stay JSON', async () => {

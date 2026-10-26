@@ -3,7 +3,7 @@
    falling back to the cached copy when there is no connection. API calls
    are never cached. Bump CACHE_VERSION when the shell file list changes. */
 
-const CACHE_VERSION = 'workboard-v3.1.0';
+const CACHE_VERSION = 'workboard-v3.2.0';
 const SHELL = [
   '/',
   '/styles.css',

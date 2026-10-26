@@ -606,102 +606,288 @@ function openReportPanel() {
 }
 
 // ---------------------------------------------------------------------------
-// Morning digest
+// Notifications: connect Telegram and choose the morning digest
 // ---------------------------------------------------------------------------
 
-async function digestApi(action, method = 'GET') {
-  const res = await fetch(`/api/digest?action=${encodeURIComponent(action)}`, {
-    method,
-    headers: { 'Authorization': `Bearer ${authToken}`, 'Content-Type': 'application/json' },
-    body: method === 'POST' ? JSON.stringify({ action }) : undefined
-  });
-  if (res.status === 401) throw new Error('Please unlock the board first.');
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok && !body.errors) throw new Error(body.error || `HTTP ${res.status}`);
-  return body;
+async function meApi(path, body = null) {
+  const res = await fetch(path, body
+    ? { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` }, body: JSON.stringify(body) }
+    : { headers: { Authorization: `Bearer ${authToken}` }, cache: 'no-store' });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.ok === false) throw new Error(json.error || `HTTP ${res.status}`);
+  return json;
 }
 
-function openDigestPanel() {
-  const deviceTz = deviceTimezone();
-  const statusList = h('ul', { class: 'status-list' }, h('li', {}, 'Checking server settings…'));
-  const result = h('p', { role: 'status' });
-  const preview = h('pre', { class: 'report-output' }, Core.buildDigest(data, { today: todayStr() }).text);
+const DIGEST_TIMES = ['06:00', '06:30', '07:00', '07:30', '08:00', '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '12:00'];
 
-  const tzLine = h('div', { class: 'sheet-actions' });
-  const drawTz = () => {
-    const saved = data.settings.timezone;
-    setChildren(tzLine,
-      h('span', { class: 'meta-line' }, `Timezone for “today”: ${saved || 'not set yet (UTC)'}`),
-      deviceTz && deviceTz !== saved ? h('button', {
-        type: 'button', class: 'button small',
-        onClick: () => {
-          commit(board => { board.settings.timezone = deviceTz; }, { render: false });
-          drawTz();
+function openNotificationsPanel() {
+  let state = null;
+  let linkUrl = null;
+  let linkRequested = false;
+  let poll = null;
+  const status = h('div', { class: 'sheet-section' }, h('p', {}, 'Loading…'));
+  const result = h('p', { role: 'status' });
+  const settingsBox = h('div', { class: 'sheet-section' });
+  const previewBox = h('pre', { class: 'report-output' });
+
+  const stopWatching = () => {
+    clearInterval(poll);
+    poll = null;
+  };
+
+  const load = async () => {
+    state = await meApi('/api/notifications');
+    draw();
+  };
+
+  const save = async patch => {
+    try {
+      state = await meApi('/api/notifications', { action: 'save', ...state.settings, ...patch, timezone: deviceTimezone() });
+      draw();
+      showToast('Saved');
+    } catch (err) {
+      showToast(err.message);
+    }
+  };
+
+  // After tapping Connect, wait for the "Start" tap in Telegram.
+  const startWatching = () => {
+    stopWatching();
+    let tries = 0;
+    poll = setInterval(async () => {
+      tries += 1;
+      if (tries > 60 || !panelDialog.open) {
+        stopWatching();
+        return;
+      }
+      try {
+        const next = await meApi('/api/notifications');
+        if (next.connected) {
+          stopWatching();
+          state = next;
+          draw();
+          showToast('Telegram connected');
         }
-      }, `Use ${deviceTz}`) : null
+      } catch (e) {}
+    }, 3000);
+  };
+
+  // The link is fetched ahead of time so the Connect tap opens Telegram directly.
+  const getLink = async () => {
+    linkRequested = true;
+    try {
+      linkUrl = (await meApi('/api/notifications', { action: 'link', timezone: deviceTimezone() })).url;
+    } catch (err) {
+      result.textContent = err.message;
+    }
+    draw();
+  };
+
+  const drawStatus = () => {
+    if (!state.botReady) {
+      if (!isOwner()) {
+        status.replaceChildren(h('p', {}, `Telegram isn’t set up yet. Ask ${state.owner} to activate the bot.`));
+        return;
+      }
+      const activate = h('button', { type: 'button', class: 'button primary' }, 'Activate bot');
+      activate.addEventListener('click', async () => {
+        activate.disabled = true;
+        result.textContent = 'Activating…';
+        try {
+          await meApi('/api/notifications', { action: 'activate' });
+          result.textContent = '';
+          showToast('Bot activated');
+          await load();
+        } catch (err) {
+          result.textContent = err.message;
+          activate.disabled = false;
+        }
+      });
+      status.replaceChildren(
+        h('h4', {}, 'Set up the Telegram bot (once)'),
+        h('ol', { class: 'steps' },
+          h('li', {}, 'In Telegram, open ', h('strong', {}, '@BotFather'), ', send ', h('code', {}, '/newbot'), ', name it “ZAWISH Workboard” and pick a username ending in “bot”.'),
+          h('li', {}, 'Add the token it gives you as the secret ', h('code', {}, 'TELEGRAM_BOT_TOKEN'), ' in Cloudflare.'),
+          h('li', {}, 'Come back here and tap Activate.')),
+        h('div', { class: 'sheet-actions' }, activate)
+      );
+      return;
+    }
+
+    if (!state.connected) {
+      if (!linkUrl && !linkRequested) getLink();
+      status.replaceChildren(
+        h('p', {}, `Link your Telegram to get your morning digest${isOwner() ? ' and join requests' : ''}. Only you receive your messages.`),
+        h('div', { class: 'sheet-actions' },
+          linkUrl
+            ? h('a', { class: 'button primary', href: linkUrl, target: '_blank', rel: 'noopener noreferrer', onClick: startWatching }, 'Connect Telegram')
+            : h('button', { type: 'button', class: 'button primary', onClick: getLink }, 'Connect Telegram'),
+          linkUrl ? h('span', { class: 'meta-line' }, 'Telegram opens: tap Start, then come back here.') : null)
+      );
+      return;
+    }
+
+    const test = h('button', { type: 'button', class: 'button' }, 'Send me a test');
+    test.addEventListener('click', async () => {
+      test.disabled = true;
+      try {
+        await meApi('/api/notifications', { action: 'test' });
+        showToast('Sent. Check Telegram.');
+      } catch (err) {
+        showToast(err.message);
+      } finally {
+        test.disabled = false;
+      }
+    });
+    const unlink = h('button', { type: 'button', class: 'button danger' }, 'Disconnect');
+    unlink.addEventListener('click', async () => {
+      if (!confirm('Disconnect Telegram? You’ll stop getting messages.')) return;
+      state = await meApi('/api/notifications', { action: 'disconnect' });
+      linkUrl = null;
+      linkRequested = false;
+      draw();
+    });
+    status.replaceChildren(
+      h('div', { class: 'connected-row' }, h('span', { class: 'ok-dot', 'aria-hidden': 'true' }), `Connected to Telegram as ${state.telegramName || 'you'}`),
+      h('div', { class: 'sheet-actions' }, test, unlink)
     );
   };
-  drawTz();
 
-  const line = (ok, label) => h('li', {}, h('span', { class: ok ? 'ok' : 'no' }, ok ? '✓' : '○'), label);
-  digestApi('status').then(status => {
-    setChildren(statusList,
-      line(status.channels.telegram, status.channels.telegram ? 'Telegram connected' : status.telegramTokenSet ? 'Telegram bot set — add TELEGRAM_CHAT_ID' : 'Telegram not set up'),
-      line(status.channels.email, status.channels.email ? 'Email connected' : 'Email not set up (optional)'),
-      line(true, 'Daily schedule is active (8:00 AM IST)'),
-      status.ownerOnly ? h('li', {}, 'Personal digests for each team member are coming soon.') : null
+  const drawSettings = () => {
+    if (!state.botReady) {
+      settingsBox.replaceChildren();
+      return;
+    }
+    const s = state.settings;
+    const times = DIGEST_TIMES.includes(s.time) ? DIGEST_TIMES : [...DIGEST_TIMES, s.time].sort();
+    const timeSelect = h('select', { 'aria-label': 'Digest time' }, times.map(time => h('option', { value: time, selected: time === s.time }, Core.formatTime(time))));
+    timeSelect.addEventListener('change', () => save({ time: timeSelect.value }));
+    const choice = (label, key, options) => h('div', { class: 'segmented', role: 'group', 'aria-label': label },
+      options.map(([value, text]) => h('button', { type: 'button', 'aria-pressed': String(s[key] === value), onClick: () => save({ [key]: value }) }, text)));
+    const enabled = h('input', { type: 'checkbox', checked: s.enabled });
+    enabled.addEventListener('change', () => save({ enabled: enabled.checked }));
+    const skip = h('input', { type: 'checkbox', checked: s.skipEmpty });
+    skip.addEventListener('change', () => save({ skipEmpty: skip.checked }));
+
+    setChildren(settingsBox,
+      h('h4', {}, 'Morning digest'),
+      h('label', { class: 'check-row' }, enabled, h('span', {}, 'Send me a morning digest on Telegram')),
+      h('div', { class: 'details-grid' },
+        h('span', { class: 'label' }, 'Time'),
+        h('div', { class: 'value' }, timeSelect, h('span', { class: 'meta-line' }, (s.timezone || deviceTimezone() || '').replace(/_/g, ' '))),
+        h('span', { class: 'label' }, 'Days'),
+        h('div', { class: 'value' }, choice('Days', 'days', [['mon-sat', 'Mon–Sat'], ['daily', 'Every day'], ['mon-fri', 'Mon–Fri']])),
+        h('span', { class: 'label' }, 'Detail'),
+        h('div', { class: 'value' }, choice('Detail', 'mode', [['full', 'Task names'], ['counts', 'Counts only']]))),
+      h('label', { class: 'check-row' }, skip, h('span', {}, 'Skip days when nothing is overdue or due')),
+      isOwner() ? h('p', {}, 'As the owner you also get join requests here with Approve / Reject buttons, plus a note when someone joins or deletes their account.') : null,
+      h('h4', {}, 'Preview'),
+      previewBox
     );
-  }).catch(err => {
-    statusList.replaceChildren(h('li', {}, `Could not reach the server: ${err.message}`));
-  });
+    previewBox.textContent = Core.buildDigest(data, { today: todayStr(), name: currentUser ? currentUser.name : '', mode: s.mode }).text;
+  };
 
-  const sendButton = h('button', { type: 'button', class: 'button primary' }, 'Send test now');
-  sendButton.addEventListener('click', async () => {
-    sendButton.disabled = true;
-    result.textContent = 'Sending…';
-    try {
-      const body = await digestApi('send', 'POST');
-      result.textContent = body.ok ? `Sent via ${body.sent.join(' and ')}.` : (body.errors || ['Not sent']).join(' ');
-    } catch (err) {
-      result.textContent = err.message;
-    } finally {
-      sendButton.disabled = false;
-    }
-  });
-
-  const chatsButton = h('button', { type: 'button', class: 'button' }, 'Find my Telegram chat ID');
-  chatsButton.addEventListener('click', async () => {
-    result.textContent = 'Looking up chats…';
-    try {
-      const body = await digestApi('telegram-chats');
-      if (body.error) throw new Error(body.error);
-      result.textContent = body.chats.length
-        ? `Chats that messaged your bot: ${body.chats.map(c => `${c.name || c.type} → ${c.id}`).join(', ')}. Put the number in TELEGRAM_CHAT_ID.`
-        : 'No chats yet. Open your bot in Telegram, press Start, send it any message, then try again.';
-    } catch (err) {
-      result.textContent = err.message;
-    }
-  });
+  const draw = () => {
+    if (!state) return;
+    drawStatus();
+    drawSettings();
+  };
 
   openPanel(
-    sheetHead('Morning digest'),
-    h('p', {}, 'Every morning (about 8:00 AM India time) you get a message with what is overdue, due today, urgent and waiting. Free plans can deliver it up to an hour late.'),
-    statusList,
-    tzLine,
-    h('div', { class: 'sheet-section' }, h('h4', {}, 'Preview'), preview),
-    h('div', { class: 'sheet-actions' }, chatsButton, h('span', { class: 'spacer' }), sendButton),
+    sheetHead('Notifications'),
+    h('p', {}, 'Your morning digest on Telegram: what’s overdue, due today, urgent and waiting. Only you receive your digest.'),
+    status,
     result,
-    h('details', { class: 'setup' },
-      h('summary', {}, 'How to set it up (5 minutes)'),
-      h('ol', {},
-        h('li', {}, 'In Telegram, message ', h('code', {}, '@BotFather'), ', send ', h('code', {}, '/newbot'), ' and copy the token it gives you.'),
-        h('li', {}, 'In Cloudflare → Workers & Pages → zawish-workboard → Settings → Variables and Secrets, add a secret ', h('code', {}, 'TELEGRAM_BOT_TOKEN'), '.'),
-        h('li', {}, 'Open your new bot in Telegram and send it “hi”.'),
-        h('li', {}, 'Click “Find my Telegram chat ID” here, then add it as the secret ', h('code', {}, 'TELEGRAM_CHAT_ID'), '.'),
-        h('li', {}, 'Optional email: add ', h('code', {}, 'RESEND_API_KEY'), ' and ', h('code', {}, 'DIGEST_EMAIL_TO'), ' (free account at resend.com).')
-      )
-    )
+    settingsBox
   );
+  panelDialog.addEventListener('close', stopWatching, { once: true });
+  load().catch(err => status.replaceChildren(h('p', {}, `Couldn’t load your settings: ${err.message}`)));
+}
+
+// ---------------------------------------------------------------------------
+// Your data: download, devices, delete account
+// ---------------------------------------------------------------------------
+
+function openDataPanel() {
+  const devicesBox = h('div', { class: 'sheet-section' }, h('p', {}, 'Loading your devices…'));
+  const deleteBox = h('div', { class: 'sheet-section' });
+
+  const drawDevices = async () => {
+    try {
+      const { devices } = await meApi('/api/me/devices');
+      const others = devices.filter(device => !device.current).length;
+      setChildren(devicesBox,
+        h('h4', {}, `Signed-in devices · ${devices.length}`),
+        h('ul', { class: 'member-list' }, devices.map(device => h('li', { class: 'device-row' },
+          h('div', { class: 'member-name' }, device.device, device.current ? h('span', { class: 'member-meta' }, ' · this device') : null),
+          h('div', { class: 'member-meta' }, `Last used ${relativeTime(device.lastUsedAt)} · signed in ${formatStamp(device.signedInAt)}`)))),
+        others ? h('div', { class: 'sheet-actions' }, h('button', {
+          type: 'button', class: 'button',
+          onClick: async () => {
+            if (!confirm(`Sign out ${others} other ${others === 1 ? 'device' : 'devices'}? They’ll need your PIN again.`)) return;
+            await meApi('/api/me/devices', {});
+            showToast('Other devices signed out');
+            drawDevices();
+          }
+        }, 'Sign out all other devices')) : null
+      );
+    } catch (err) {
+      devicesBox.replaceChildren(h('p', {}, `Couldn’t load your devices: ${err.message}`));
+    }
+  };
+
+  const download = async () => {
+    const exported = await meApi('/api/me/export');
+    const blob = new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const name = (currentUser ? currentUser.name : 'me').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const link = h('a', { href: url, download: `zawish-workboard-${name}-data-${todayStr()}.json` });
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  if (isOwner()) {
+    setChildren(deleteBox, h('h4', {}, 'Delete account'), h('p', {}, 'You’re the owner, so this account can’t be deleted. The team always needs an admin.'));
+  } else {
+    const pin = h('input', { type: 'password', class: 'pin-field', inputMode: 'numeric', maxLength: 6, autocomplete: 'off', placeholder: 'Your 6-digit PIN', 'aria-label': 'Your PIN' });
+    const go = h('button', { type: 'button', class: 'button danger' }, 'Delete my account forever');
+    go.addEventListener('click', async () => {
+      if (!/^\d{6}$/.test(pin.value)) {
+        pin.focus();
+        showToast('Enter your 6-digit PIN to confirm.');
+        return;
+      }
+      if (!confirm('Delete your account and board permanently? This can’t be undone.')) return;
+      go.disabled = true;
+      try {
+        await meApi('/api/me/delete', { pin: pin.value });
+        panelDialog.close();
+        deactivateUser();
+        applyIdentity();
+        renderNow();
+        showLockScreen('Your account and board were deleted. Thanks for being on the team.');
+      } catch (err) {
+        pin.value = '';
+        showToast(err.message);
+        go.disabled = false;
+      }
+    });
+    setChildren(deleteBox,
+      h('h4', {}, 'Delete account'),
+      h('p', {}, 'Permanently deletes your board, your devices and your Telegram link. This can’t be undone, so download your data first if you want a copy.'),
+      h('div', { class: 'sheet-actions' }, pin, go));
+  }
+
+  openPanel(
+    sheetHead('Your data'),
+    h('p', {}, 'Everything ZAWISH Workboard keeps about you: your profile, your board, your devices and your notification settings. Nobody else can see your board.'),
+    h('div', { class: 'sheet-actions' }, h('button', { type: 'button', class: 'button primary', onClick: () => download().catch(err => showToast(err.message)) }, 'Download my data')),
+    devicesBox,
+    deleteBox
+  );
+  drawDevices();
 }
 
 // ---------------------------------------------------------------------------
@@ -1106,12 +1292,13 @@ function openMoreMenu(anchor) {
     menuItem('Weekly report', openReportPanel, { icon: '▤' }),
     menuItem(`Archive done tasks (${doneCount})`, () => archiveDone(), { icon: '⤓', disabled: !doneCount }),
     menuItem(`Archived tasks (${archivedCount})`, openArchivePanel, { icon: '▣' }),
-    menuItem('Morning digest', openDigestPanel, { icon: '☼' }),
+    menuItem('Notifications', openNotificationsPanel, { icon: '✉' }),
     narrowQuery.matches ? menuItem('New category', createCategoryInteractive, { icon: '+' }) : null,
     h('div', { class: 'menu-sep' }),
     h('div', { class: 'menu-label' }, 'Theme'),
     h('div', { class: 'menu-segmented' }, themeControl),
     h('div', { class: 'menu-sep' }),
+    menuItem('Your data', openDataPanel, { icon: '⇣' }),
     menuItem('Backup & restore', openBackupPanel, { icon: '⇅' }),
     menuItem('Sync status', openSyncPanel, { icon: '⟳' }),
     touchQuery.matches ? null : menuItem('Keyboard shortcuts', openShortcutsPanel, { icon: '⌘', hint: '?' }),

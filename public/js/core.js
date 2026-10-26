@@ -91,6 +91,22 @@
     }
   }
 
+  // Local date, time and weekday for a time zone: { day: 'YYYY-MM-DD', time: 'HH:MM', weekday: 0-6 }.
+  function zonedClock(date, timeZone) {
+    let zone = timeZone;
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: zone });
+    } catch (e) {
+      zone = 'UTC';
+    }
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+    }).formatToParts(date);
+    const get = type => parts.find(part => part.type === type).value;
+    const day = `${get('year')}-${get('month')}-${get('day')}`;
+    return { day, time: `${get('hour')}:${get('minute')}`, weekday: weekdayOf(day) };
+  }
+
   function dayToUTC(day) {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day || '');
     return m ? Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : NaN;
@@ -869,7 +885,8 @@
   // Text reports
   // ---------------------------------------------------------------------------
 
-  function buildDigest(data, { today, now = Date.now(), name = '' } = {}) {
+  // mode 'counts' leaves out task names (for people who prefer that on Telegram).
+  function buildDigest(data, { today, now = Date.now(), name = '', mode = 'full' } = {}) {
     const open = listTasks(data).filter(({ task }) => task.status !== 'DONE');
     const overdue = open.filter(x => x.task.due && x.task.due < today).sort(compareDue);
     const dueToday = open.filter(x => x.task.due === today).sort(compareDue);
@@ -878,8 +895,27 @@
     const waiting = open.filter(x => x.task.status === 'WAIT');
     const inProgress = open.filter(x => x.task.status === 'WIP').length;
 
+    const counts = {
+      overdue: overdue.length, today: dueToday.length, urgent: urgent.length,
+      upcoming: upcoming.length, waiting: waiting.length, inProgress, open: open.length
+    };
+    const isEmpty = !overdue.length && !dueToday.length && !urgent.length;
+    const greeting = `☀️ Good morning${name ? `, ${name.split(/\s+/)[0]}` : ''}! ${formatDay(today)}`;
+
+    if (mode === 'counts') {
+      const parts = [
+        overdue.length ? `🔴 ${overdue.length} overdue` : null,
+        dueToday.length ? `📅 ${dueToday.length} due today` : null,
+        urgent.length ? `❗ ${urgent.length} urgent` : null,
+        upcoming.length ? `🗓 ${upcoming.length} in the next 3 days` : null,
+        waiting.length ? `⏳ ${waiting.length} waiting on others` : null
+      ].filter(Boolean);
+      const text = [greeting, '', parts.length ? parts.join('\n') : 'Nothing overdue or due today. 🎉', '', `🔄 ${inProgress} in progress · ${open.length} open tasks`].join('\n');
+      return { text, isEmpty, counts };
+    }
+
     const line = ({ task, category }, extra) => `• ${task.text} — ${category.name}${extra ? ` (${extra})` : ''}`;
-    const lines = [`☀️ Good morning${name ? `, ${name.split(/\s+/)[0]}` : ''}! ${formatDay(today)}`];
+    const lines = [greeting];
     const section = (title, items, format) => {
       if (!items.length) return;
       lines.push('', `${title} (${items.length})`);
@@ -892,18 +928,10 @@
     section('🗓 Next 3 days', upcoming, x => line(x, describeDue(x.task, today).label));
     section('⏳ Waiting on others', waiting, x => line(x, x.task.statusAt ? `${ageInDays(x.task.statusAt, now)}d` : ''));
 
-    const isEmpty = !overdue.length && !dueToday.length && !urgent.length;
     if (isEmpty) lines.splice(1, 0, '', 'Nothing overdue or due today. 🎉');
     lines.push('', `🔄 ${inProgress} in progress · ${open.length} open tasks`);
 
-    return {
-      text: lines.join('\n'),
-      isEmpty,
-      counts: {
-        overdue: overdue.length, today: dueToday.length, urgent: urgent.length,
-        upcoming: upcoming.length, waiting: waiting.length, inProgress, open: open.length
-      }
-    };
+    return { text: lines.join('\n'), isEmpty, counts };
   }
 
   /**
@@ -957,7 +985,7 @@
   return {
     SCHEMA, DAY_MS, STATUSES, STATUS_LABELS, NEXT_STATUS, CATEGORY_COLORS, REPEAT_FREQS, WEEKDAYS, MONTHS,
     makeId, cleanText, clone, isValidTime,
-    localDay, dayInTimeZone, isValidDay, addDays, addMonths, daysBetween, weekdayOf, startOfWeek,
+    localDay, dayInTimeZone, zonedClock, isValidDay, addDays, addMonths, daysBetween, weekdayOf, startOfWeek,
     formatDay, formatRange, formatTime, ageInDays, describeDue,
     normalizeRepeat, describeRepeat, nextOccurrence, nextDueAfterCompletion,
     parseQuickAdd, findCategory,

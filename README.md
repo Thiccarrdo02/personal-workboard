@@ -27,7 +27,9 @@ Personal task boards for the ZAWISH team, built around one screen of client boar
 - **Recurring tasks**: completing one creates the next occurrence automatically.
 - **Archive** done tasks to keep the board clean; they still count in reports.
 - **Weekly report** per client (done / in progress / waiting / coming up), ready to copy or share.
-- **Morning digest** via Telegram and/or email, sent daily at ~8:00 AM IST.
+- **Morning digest on Telegram**, per person: each person links their own Telegram and picks the time (default 8:00), days (Mon–Sat by default) and detail (task names or counts only).
+- **Owner pings on Telegram**: join requests arrive with Approve / Reject buttons, plus a note when someone joins with an invite or deletes their account.
+- **Your data**: download everything kept about you, see signed-in devices and sign out the others, delete your own account (PIN required).
 - **Views**: Board (by client), **Kanban** (by status, drag between columns) and **Focus** (urgent + in progress only).
 - **Dark mode** (auto / light / dark), category colours, collapsible and re-orderable categories.
 - **Keyboard first**: `J/K` move, `Space` status, `E` edit, `D` due date, `Shift+↑/↓` reorder, `?` for the full list.
@@ -66,17 +68,17 @@ The installed app opens full-screen and keeps working without a connection; chan
 
 ---
 
-## Morning Digest Setup (optional)
+## Telegram setup (once, by the owner)
 
-For now the digest covers the owner's board. In Cloudflare → Workers & Pages → `zawish-workboard` → Settings → Variables and Secrets, add these as **secrets**:
+1. In Telegram, open `@BotFather`, send `/newbot`, name it **ZAWISH Workboard** and pick a username ending in `bot` (e.g. `ZawishWorkboardBot`).
+2. Add the token as a secret (paste it when asked; it never goes in a file):
+   ```bash
+   npx wrangler secret put TELEGRAM_BOT_TOKEN
+   ```
+3. In the app: **More → Notifications → Activate bot**. This registers the webhook (`/api/telegram`, checked with the `TELEGRAM_WEBHOOK_SECRET` secret) and the bot's commands.
+4. Everyone then taps **More → Notifications → Connect Telegram**, then **Start** in Telegram. `/stop` in the bot unlinks.
 
-| Secret | Purpose |
-| --- | --- |
-| `TELEGRAM_BOT_TOKEN` | From `@BotFather` → `/newbot` |
-| `TELEGRAM_CHAT_ID` | Message your bot, then use **More → Morning digest → Find my Telegram chat ID** |
-| `RESEND_API_KEY`, `DIGEST_EMAIL_TO` | Optional email delivery via [resend.com](https://resend.com) (`DIGEST_EMAIL_FROM` optional) |
-
-The schedule lives in `wrangler.jsonc` (`30 2 * * *` UTC = 8:00 AM IST). Use **Send test now** in the app to try it.
+The cron in `wrangler.jsonc` runs every 15 minutes and sends each person's digest once a day, within two hours after their chosen time, in their own time zone (`DIGEST_TIMEZONE` is the fallback). Nothing is sent to anyone who hasn't connected. If someone blocks the bot, they're unlinked automatically.
 
 ---
 
@@ -96,7 +98,7 @@ node scripts/admin.mjs setup-link --name "Your Name" --role owner
 ```bash
 npm test
 ```
-Unit tests for dates, quick-add parsing, recurrence and sync merging, plus Worker tests (PINs, lockouts, setup links, sessions, sync conflicts, isolation between people) against an in-memory SQLite database.
+Unit tests for dates, quick-add parsing, recurrence and sync merging, plus Worker tests (PINs, lockouts, setup links, sessions, sync conflicts, isolation between people) against an in-memory SQLite database, with a fake Telegram API for the bot, pings and the digest schedule.
 
 ### Project layout
 
@@ -106,9 +108,10 @@ public/            static app served by Cloudflare (Workers Static Assets)
   js/core.js       pure logic shared with the Worker (dates, parsing, merge, reports)
   js/store.js      state, undo, actions, per-person storage, sync client
   js/ui.js         rendering: board, kanban, focus, Today strip, menus
-  js/sheets.js     task details, quick add, archive, report, digest, backup
+  js/sheets.js     task details, quick add, archive, report, team, notifications, your data, backup
   js/main.js       sign-in screen, keyboard shortcuts, startup
-worker/            Cloudflare Worker: /api/profiles, login, setup, me, logout, sync, digest + daily cron
+worker/            Cloudflare Worker: profiles, login, setup, team, me (export/devices/delete), sync,
+                   notifications + Telegram webhook, digest cron every 15 min
 migrations/        D1 schema
 scripts/admin.mjs  create a person + one-time setup/reset link; import a board from the old Gist
 wrangler.jsonc     Worker, D1, domain and cron config

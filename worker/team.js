@@ -73,7 +73,7 @@ export async function requestAccess(env, request, body, now) {
 
   // A waiting session: it can only check the request's status until the owner approves.
   const session = await createSession(env, id, { remember: body.remember !== false, device: request.headers.get('User-Agent') || '', status: 'pending' }, now);
-  return { ok: true, status: 'pending', token: session.token, user: { id, name, role: 'member' }, owner: await ownerName(env) };
+  return { ok: true, status: 'pending', token: session.token, user: { id, name, role: 'member' }, note, owner: await ownerName(env) };
 }
 
 export async function requestStatus(env, token, now) {
@@ -132,6 +132,33 @@ async function issueLink(env, userId, ownerId, now) {
   return { ok: true, token, purpose, expiresAt: now + LINK_TTL_MS, user: { id: user.id, name: user.name } };
 }
 
+async function pendingRequest(env, userId) {
+  const user = await env.DB.prepare("SELECT id, name FROM users WHERE id = ? AND status = 'pending'").bind(String(userId || '')).first();
+  if (!user) throw new HttpError(404, 'That request is no longer waiting.');
+  return user;
+}
+
+// Used by the Team panel and by the owner's Telegram buttons. Returns { id, name }.
+export async function approveRequest(env, userId, now) {
+  const user = await pendingRequest(env, userId);
+  const [updated] = await env.DB.batch([
+    env.DB.prepare("UPDATE users SET status = 'active', approved_at = ? WHERE id = ? AND status = 'pending'").bind(now, user.id),
+    env.DB.prepare("UPDATE sessions SET status = 'active' WHERE user_id = ? AND status = 'pending'").bind(user.id)
+  ]);
+  if (updated.meta.changes !== 1) throw new HttpError(404, 'That request is no longer waiting.');
+  return user;
+}
+
+export async function rejectRequest(env, userId) {
+  const user = await pendingRequest(env, userId);
+  const [, removed] = await env.DB.batch([
+    env.DB.prepare("DELETE FROM sessions WHERE user_id = ? AND user_id IN (SELECT id FROM users WHERE status = 'pending')").bind(user.id),
+    env.DB.prepare("DELETE FROM users WHERE id = ? AND status = 'pending'").bind(user.id)
+  ]);
+  if (removed.meta.changes !== 1) throw new HttpError(404, 'That request is no longer waiting.');
+  return user;
+}
+
 async function findMember(env, userId) {
   const user = await env.DB.prepare('SELECT id, name, role, status FROM users WHERE id = ?').bind(String(userId || '')).first();
   if (!user) throw new HttpError(404, 'That person is not on the team.');
@@ -151,22 +178,12 @@ export async function teamAction(env, session, body, now) {
     }
     case 'link':
       return issueLink(env, String(body.userId || ''), ownerId, now);
-    case 'approve': {
-      const [updated] = await env.DB.batch([
-        env.DB.prepare("UPDATE users SET status = 'active', approved_at = ? WHERE id = ? AND status = 'pending'").bind(now, String(body.userId || '')),
-        env.DB.prepare("UPDATE sessions SET status = 'active' WHERE user_id = ? AND status = 'pending'").bind(String(body.userId || ''))
-      ]);
-      if (updated.meta.changes !== 1) throw new HttpError(404, 'That request is no longer waiting.');
+    case 'approve':
+      await approveRequest(env, body.userId, now);
       return { ok: true };
-    }
-    case 'reject': {
-      const [, removed] = await env.DB.batch([
-        env.DB.prepare("DELETE FROM sessions WHERE user_id = ? AND user_id IN (SELECT id FROM users WHERE status = 'pending')").bind(String(body.userId || '')),
-        env.DB.prepare("DELETE FROM users WHERE id = ? AND status = 'pending'").bind(String(body.userId || ''))
-      ]);
-      if (removed.meta.changes !== 1) throw new HttpError(404, 'That request is no longer waiting.');
+    case 'reject':
+      await rejectRequest(env, body.userId);
       return { ok: true };
-    }
     case 'rename': {
       const user = await findMember(env, body.userId);
       const name = cleanName(body.name);
